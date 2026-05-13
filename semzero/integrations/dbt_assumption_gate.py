@@ -1848,6 +1848,146 @@ def _is_must_review_finding(finding: AssumptionFindingV1) -> bool:
     )
 
 
+
+def _comment_group_key(finding: AssumptionFindingV1) -> tuple[str, str, str, str, str]:
+    """Group repeated-looking findings for compact PR comments.
+
+    The JSON receipt remains exhaustive. This only reduces reviewer fatigue in the
+    sticky GitHub comment.
+    """
+    detector = str(getattr(finding, "detector", "") or "")
+    family = str(getattr(finding, "assumption_family", "") or getattr(finding, "finding_type", "") or "")
+    reviewer_check = str(getattr(finding, "reviewer_check", "") or "")
+    blast = _finding_blast_summary(finding, limit=8)
+    evidence = str(getattr(finding, "why_now", "") or getattr(finding, "evidence", "") or "")[:180]
+    return (detector, family, reviewer_check, blast, evidence)
+
+
+def _group_comment_findings(findings: list[AssumptionFindingV1]) -> list[list[AssumptionFindingV1]]:
+    grouped: dict[tuple[str, str, str, str, str], list[AssumptionFindingV1]] = {}
+    for finding in findings:
+        grouped.setdefault(_comment_group_key(finding), []).append(finding)
+
+    groups = list(grouped.values())
+
+    def _sort_key(group: list[AssumptionFindingV1]) -> tuple[int, float, int]:
+        top = group[0]
+        severity_rank = {
+            "critical": 0,
+            "high": 1,
+            "medium": 2,
+            "low": 3,
+            "info": 4,
+        }.get(str(getattr(top, "severity", "") or "").lower(), 5)
+        risk = float(getattr(top, "risk_score", 0) or 0)
+        return (severity_rank, -risk, -len(group))
+
+    groups.sort(key=_sort_key)
+    return groups
+
+
+def _comment_display_severity(finding: AssumptionFindingV1) -> str:
+    severity = str(getattr(finding, "severity", "") or "review").lower()
+    confidence = str(getattr(finding, "confidence", "") or "").lower()
+    blast = _finding_blast_summary(finding, limit=3)
+    business = str(getattr(finding, "business_impact", "") or getattr(finding, "business_criticality", "") or "").upper()
+
+    low_confidence = confidence in {"low", "weak"}
+    no_blast = "No downstream resources found" in blast
+    unknown_business = not business or business == "UNKNOWN"
+
+    if low_confidence and no_blast and unknown_business and severity in {"critical", "high"}:
+        return "potential high"
+    return severity
+
+
+def _comment_why_now(finding: AssumptionFindingV1) -> str:
+    explicit = bool(getattr(finding, "explicit_before_after_context", False) or getattr(finding, "has_explicit_diff", False))
+    raw = str(getattr(finding, "why_now", "") or "").strip()
+
+    if explicit and raw:
+        return raw
+
+    if raw:
+        snippet = raw[:220].replace("\n", " ")
+        return (
+            "This PR touched a dbt resource connected to this assumption. "
+            "Explicit before/after semantic diff was not available, so SemZero used "
+            f"changed-resource reachability plus static detector evidence. Evidence snippet: {snippet}"
+        )
+
+    return (
+        "This PR touched a dbt resource connected to this assumption. "
+        "Explicit before/after semantic diff was not available, so SemZero used "
+        "changed-resource reachability plus static detector evidence."
+    )
+
+
+def _render_comment_finding_group(group: list[AssumptionFindingV1]) -> list[str]:
+    finding = group[0]
+    title = str(getattr(finding, "title", "") or getattr(finding, "assumption_family", "") or "Assumption finding")
+    severity = _comment_display_severity(finding)
+    confidence = str(getattr(finding, "confidence", "") or "unknown")
+    risk = getattr(finding, "risk_score", None)
+    risk_txt = f"{risk}/100" if risk is not None else "unknown"
+
+    suffix = f" · {len(group)} related findings grouped" if len(group) > 1 else ""
+    lines = [
+        f"#### {title} — {severity} · confidence {confidence} · risk {risk_txt}{suffix}",
+        "",
+    ]
+
+    if severity.startswith("potential"):
+        lines += [
+            "_Low-confidence/no-blast finding. Review as a possible assumption, not as a proven breakage._",
+            "",
+        ]
+
+    lines += [
+        f"**Why now:** {_comment_why_now(finding)}",
+        "",
+    ]
+
+    drift = str(getattr(finding, "assumption_drift", "") or getattr(finding, "description", "") or "").strip()
+    if drift:
+        lines += [f"**Assumption drift:** {drift}", ""]
+
+    fidelity = getattr(finding, "evidence_fidelity", None)
+    fidelity_band = str(getattr(finding, "evidence_fidelity_band", "") or "").strip()
+    replay_ran = getattr(finding, "replay_ran", False)
+    if fidelity is not None:
+        band = f" ({fidelity_band})" if fidelity_band else ""
+        lines += [f"**Evidence fidelity:** {fidelity}{band} · replay ran: {replay_ran}", ""]
+
+    validation_status = str(getattr(finding, "validation_replay_status", "") or "").strip()
+    validation_reason = str(getattr(finding, "validation_replay_reason", "") or "").strip()
+    if validation_status or validation_reason:
+        joined = " · ".join(x for x in [validation_status, validation_reason] if x)
+        lines += [f"**Validation replay:** {joined}", ""]
+
+    blast = _finding_blast_summary(finding)
+    business = str(getattr(finding, "business_impact", "") or getattr(finding, "business_criticality", "") or "UNKNOWN")
+    coverage = str(getattr(finding, "control_coverage", "") or "unknown")
+    detector = str(getattr(finding, "detector", "") or "unknown")
+    lines += [
+        f"**Blast radius:** {blast}",
+        f"**Business:** {business} · Control coverage: {coverage} · Detector: `{detector}`",
+    ]
+
+    ids = [str(getattr(f, "stable_id", "") or getattr(f, "finding_id", "")) for f in group]
+    ids = [x for x in ids if x]
+    if ids:
+        label = "Stable IDs" if len(ids) > 1 else "Stable ID"
+        lines += [f"**{label}:** " + ", ".join(f"`{x}`" for x in ids[:6])]
+
+    reviewer_check = str(getattr(finding, "reviewer_check", "") or "").strip()
+    if reviewer_check:
+        lines += [f"**Reviewer check:** {reviewer_check}"]
+
+    lines += [""]
+    return lines
+
+
 def _finding_blast_summary(finding: AssumptionFindingV1, limit: int = 3) -> str:
     nodes = finding.blast_radius[:limit]
     if not nodes:
@@ -1867,8 +2007,89 @@ def _finding_blast_summary(finding: AssumptionFindingV1, limit: int = 3) -> str:
     return ", ".join(chunks)
 
 
-def _render_compact_finding(finding: AssumptionFindingV1, idx: int) -> list[str]:
-    why_now = (finding.trigger_evidence[0] if finding.trigger_evidence else finding.trigger)[:160]
+def _comment_group_key(finding: AssumptionFindingV1) -> tuple[str, str, str, str, str]:
+    """Group repeated-looking findings for compact PR comments.
+
+    The JSON receipt remains exhaustive. This only reduces reviewer fatigue in the
+    sticky GitHub comment.
+    """
+    detector = (finding.pattern_detail or {}).get("pattern_type", finding.family)
+    business = _finding_business_severity(finding)
+    control = (finding.control_coverage or {}).get("status", "unknown")
+    blast = _finding_blast_summary(finding, limit=8)
+    drift = (finding.assumption_diff or {}).get(
+        "drift_summary"
+    ) or "Assumption-relevant behavior may have changed."
+    reviewer_check = finding.recommended_check or ""
+    return (
+        str(finding.family),
+        str(detector),
+        str(business),
+        str(control),
+        str(blast),
+        str(drift),
+        str(reviewer_check),
+    )
+
+
+def _group_comment_findings(findings: list[AssumptionFindingV1]) -> list[list[AssumptionFindingV1]]:
+    grouped: dict[tuple[str, str, str, str, str], list[AssumptionFindingV1]] = {}
+    for finding in findings:
+        grouped.setdefault(_comment_group_key(finding), []).append(finding)
+
+    groups = list(grouped.values())
+
+    def _sort_key(group: list[AssumptionFindingV1]) -> tuple[int, int, int]:
+        top = group[0]
+        return (
+            0 if _is_must_review_finding(top) else 1,
+            -SEVERITY_RANK.get(top.severity, 0),
+            -int(top.risk_score or 0),
+        )
+
+    groups.sort(key=_sort_key)
+    return groups
+
+
+def _comment_display_severity(finding: AssumptionFindingV1) -> str:
+    severity = str(finding.severity or "review").lower()
+    confidence = str(finding.confidence or "").lower()
+    business = _finding_business_severity(finding)
+    blast = _finding_blast_summary(finding)
+
+    low_confidence = confidence in {"low", "weak"}
+    no_blast = blast == "No downstream resources found"
+    unknown_business = business == "UNKNOWN"
+
+    if low_confidence and no_blast and unknown_business and severity in {"critical", "high"}:
+        return "potential high"
+    return severity
+
+
+def _comment_why_now(finding: AssumptionFindingV1) -> str:
+    raw = (finding.trigger_evidence[0] if finding.trigger_evidence else finding.trigger or "").strip()
+    has_explicit = bool((finding.assumption_diff or {}).get("explicit_before_after_context"))
+
+    if has_explicit and raw:
+        return raw[:320]
+
+    if raw:
+        snippet = raw[:220].replace("\n", " ")
+        return (
+            "This PR touched a dbt resource connected to this assumption. "
+            "Explicit before/after semantic diff was not available, so SemZero used "
+            f"changed-resource reachability plus static detector evidence. Evidence snippet: {snippet}"
+        )
+
+    return (
+        "This PR touched a dbt resource connected to this assumption. "
+        "Explicit before/after semantic diff was not available, so SemZero used "
+        "changed-resource reachability plus static detector evidence."
+    )
+
+
+def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) -> list[str]:
+    finding = group[0]
     detector = (finding.pattern_detail or {}).get("pattern_type", finding.family)
     business = _finding_business_severity(finding)
     control = (finding.control_coverage or {}).get("status", "unknown")
@@ -1885,26 +2106,44 @@ def _render_compact_finding(finding: AssumptionFindingV1, idx: int) -> list[str]
         if fidelity_score is not None
         else str(fidelity_level)
     )
-    return [
-        f"{idx}. **{finding.family.replace('_', ' ').title()}** — `{finding.severity}` · confidence `{finding.confidence}` · risk `{finding.risk_score}/100`{cost_text}",
-        f"   - **Why now:** {why_now}",
+    validation = finding.validation_replay or {}
+    validation_status = validation.get("status", "not_run")
+    validation_summary = validation.get("summary", "No Replay Lite fixture supplied.")[:140]
+    stable_ids = [f.stable_id or f.finding_id for f in group]
+    stable_ids = [sid for sid in stable_ids if sid]
+    stable_label = "Stable IDs" if len(stable_ids) > 1 else "Stable ID"
+    grouped_suffix = f" · {len(group)} related findings grouped" if len(group) > 1 else ""
+
+    severity = _comment_display_severity(finding)
+    lines = [
+        f"{idx}. **{finding.family.replace('_', ' ').title()}** — `{severity}` · confidence `{finding.confidence}` · risk `{finding.risk_score}/100`{cost_text}{grouped_suffix}",
+    ]
+
+    if severity.startswith("potential"):
+        lines += [
+            "   - _Low-confidence/no-blast finding. Review as a possible assumption, not as a proven breakage._",
+        ]
+
+    lines += [
+        f"   - **Why now:** {_comment_why_now(finding)}",
         f"   - **Assumption drift:** {drift}",
         f"   - **Evidence fidelity:** `{fidelity_text}` · replay ran: `{bool(fidelity.get('replay_ran'))}`",
-        f"   - **Validation replay:** `{(finding.validation_replay or {}).get('status', 'not_run')}` · {(finding.validation_replay or {}).get('summary', 'No Replay Lite fixture supplied.')[:140]}",
+        f"   - **Validation replay:** `{validation_status}` · {validation_summary}",
         f"   - **Blast radius:** {_finding_blast_summary(finding)}",
         f"   - **Business:** `{business}` · **Control coverage:** `{control}` · **Detector:** `{detector}`",
-        f"   - **Stable ID:** `{finding.stable_id or finding.finding_id}`",
+        f"   - **{stable_label}:** " + ", ".join(f"`{sid}`" for sid in stable_ids[:6]),
         f"   - **Reviewer check:** {finding.recommended_check}",
         "",
     ]
+    return lines
 
 
 def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -> str:
     """Render a compact reviewer-first PR comment.
 
-    v1.20 groups findings by reviewer action rather than dumping a
-    long raw evidence list. Full detail remains in the JSON receipt; the PR
-    comment should be short enough that engineers read it.
+    Full detail remains in the JSON receipt; the PR comment groups repeated
+    findings into reviewer-action items so engineers do not see duplicated
+    walls of text.
     """
     data = receipt.to_dict()
     findings = sorted(
@@ -1920,6 +2159,10 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     accepted_risk = [f for f in findings if _finding_exception_state(f) == "active_exception"]
     useful_advisory = [f for f in findings if f not in must_review and f not in accepted_risk]
     needs_feedback = [f for f in findings if _finding_exception_state(f) != "active_exception"]
+
+    must_review_groups = _group_comment_findings(must_review)
+    useful_advisory_groups = _group_comment_findings(useful_advisory)
+    accepted_risk_groups = _group_comment_findings(accepted_risk)
 
     summary = data.get("summary", {})
     cost_month = summary.get("estimated_extra_cost_per_month_usd")
@@ -1972,37 +2215,40 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     lines += [
         "### Reviewer summary",
         "",
-        f"- **Must review:** `{len(must_review)}`",
-        f"- **Useful advisory:** `{len(useful_advisory)}`",
-        f"- **Accepted risk / active exceptions:** `{len(accepted_risk)}`",
+        f"- **Must review:** `{len(must_review_groups)}` reviewer item(s) from `{len(must_review)}` raw finding(s)",
+        f"- **Useful advisory:** `{len(useful_advisory_groups)}` reviewer item(s) from `{len(useful_advisory)}` raw finding(s)",
+        f"- **Accepted risk / active exceptions:** `{len(accepted_risk_groups)}` reviewer item(s) from `{len(accepted_risk)}` raw finding(s)",
         f"- **Needs feedback:** `{len(needs_feedback)}`",
         "",
     ]
 
     visible_count = 0
-    if must_review:
+    if must_review_groups:
         lines += ["### Must review", ""]
-        for idx, finding in enumerate(must_review[:max_findings], start=1):
-            lines.extend(_render_compact_finding(finding, idx))
-            visible_count += 1
+        for idx, group in enumerate(must_review_groups[:max_findings], start=1):
+            lines.extend(_render_comment_finding_group(group, idx))
+            visible_count += len(group)
 
-    remaining_budget = max(0, max_findings - visible_count)
-    if useful_advisory and remaining_budget:
+    remaining_budget = max(0, max_findings - len(must_review_groups[:max_findings]))
+    if useful_advisory_groups and remaining_budget:
         lines += ["### Useful advisory", ""]
-        for idx, finding in enumerate(useful_advisory[:remaining_budget], start=1):
-            lines.extend(_render_compact_finding(finding, idx))
-            visible_count += 1
+        for idx, group in enumerate(useful_advisory_groups[:remaining_budget], start=1):
+            lines.extend(_render_comment_finding_group(group, idx))
+            visible_count += len(group)
 
-    if accepted_risk:
+    if accepted_risk_groups:
         lines += ["### Accepted risk / exceptions", ""]
-        for finding in accepted_risk[:3]:
+        for group in accepted_risk_groups[:3]:
+            finding = group[0]
             exc = finding.exception or {}
             active = exc.get("active") or []
             first = active[0] if active else {}
             reason = first.get("reason") or "No reason captured"
             expires = first.get("expires_at") or "no expiry"
+            ids = ", ".join(f"`{f.stable_id or f.finding_id}`" for f in group[:6])
+            grouped_suffix = f" ({len(group)} grouped findings)" if len(group) > 1 else ""
             lines += [
-                f"- `{finding.stable_id or finding.finding_id}` — **{finding.family.replace('_', ' ').title()}** is annotated as accepted risk.",
+                f"- {ids} — **{finding.family.replace('_', ' ').title()}** is annotated as accepted risk{grouped_suffix}.",
                 f"  - Reason: {reason}",
                 f"  - Expires: `{expires}`",
             ]
@@ -2011,7 +2257,7 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     hidden = max(0, len(findings) - visible_count)
     if hidden:
         lines += [
-            f"_{hidden} additional finding(s) are in the JSON receipt; this PR comment is intentionally capped to reduce review noise._",
+            f"_{hidden} additional raw finding(s) are in the JSON receipt; this PR comment is intentionally capped/grouped to reduce review noise._",
             "",
         ]
 
