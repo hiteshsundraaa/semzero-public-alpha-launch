@@ -27,7 +27,7 @@ def test_init_assumption_ci_scaffolds_sticky_shadow_workflow_and_examples(tmp_pa
     assert "cache: pip" not in workflow
     assert "SEMZERO_PACKAGE_SPEC" in workflow
     assert "pip install -e ." in workflow
-    assert "[ -f pyproject.toml ] || [ -f setup.py ]" in workflow
+    assert '[ -f semzero/cli.py ] && grep -q "init-assumption-ci" semzero/cli.py' in workflow
     assert "SemZero could not find target/manifest.json" in workflow
     assert "command -v dbt" in workflow
     assert (tmp_path / ".semzero" / "assumption_gate_policy.yml").exists()
