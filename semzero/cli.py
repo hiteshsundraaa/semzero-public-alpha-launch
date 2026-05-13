@@ -454,8 +454,8 @@ jobs:
 
           if [ -n "$SEMZERO_PACKAGE_SPEC" ]; then
             pip install "$SEMZERO_PACKAGE_SPEC"
-          elif [ -f pyproject.toml ] || [ -f setup.py ]; then
-            echo "SEMZERO_PACKAGE_SPEC not set; falling back to local editable install."
+          elif [ -f semzero/cli.py ] && grep -q "init-assumption-ci" semzero/cli.py; then
+            echo "SEMZERO_PACKAGE_SPEC not set; detected local SemZero source checkout."
             pip install -e .
           else
             echo "::error::SemZero is not installed and SEMZERO_PACKAGE_SPEC is not configured."
