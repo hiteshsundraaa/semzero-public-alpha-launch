@@ -1,0 +1,14 @@
+sqlalchemy>=2.0
+networkx>=3.2
+jinja2>=3.1
+requests>=2.31
+click>=8.1
+pandas>=2.0
+pyyaml>=6.0
+python-dotenv>=1.0
+
+# Optional — install what you need
+# psycopg2-binary>=2.9       # Postgres
+# snowflake-sqlalchemy>=1.5  # Snowflake
+# torch>=2.2                 # GNN features
+# torch-geometric>=2.5       # GNN features

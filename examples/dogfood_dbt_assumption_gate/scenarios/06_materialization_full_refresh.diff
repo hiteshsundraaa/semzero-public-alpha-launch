@@ -1,0 +1,16 @@
+diff --git a/models/marts/incremental_events.sql b/models/marts/incremental_events.sql
+index aaa111..bbb222 100644
+--- a/models/marts/incremental_events.sql
++++ b/models/marts/incremental_events.sql
+@@ -1,8 +1,7 @@
+-{{ config(materialized='incremental', unique_key='event_id') }}
++{{ config(materialized='table') }}
+ 
+ select *
+ from {{ ref('stg_events') }}
+-
+-{% if is_incremental() %}
+-where event_ts > (select max(event_ts) from {{ this }})
+-{% endif %}
++-- full rebuild is intentional for backfill
++-- SemZero should still surface warehouse cost exposure before merge.

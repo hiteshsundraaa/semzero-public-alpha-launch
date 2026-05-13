@@ -1,0 +1,4 @@
+--- a/models/staging/stg_orders.sql
++++ b/models/staging/stg_orders.sql
++ -- source now emits status = 'partially_refunded' in addition to paid/refunded
++ select order_id, user_id, account_id, status, discount_amount, amount, updated_at from raw.orders

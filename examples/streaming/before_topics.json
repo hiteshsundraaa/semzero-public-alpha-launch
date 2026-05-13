@@ -1,0 +1,19 @@
+{
+  "topics": {
+    "orders.events": {
+      "schema": {
+        "type": "record",
+        "fields": [
+          {"name": "order_id", "type": "string"},
+          {"name": "customer_id", "type": "string"},
+          {"name": "event_ts", "type": "long"},
+          {"name": "status", "type": "string", "symbols": ["created", "paid", "cancelled"]},
+          {"name": "amount", "type": "double"}
+        ]
+      },
+      "config": {"partition_key": "order_id", "retention_ms": 604800000, "schema_compatibility": "BACKWARD", "enable_idempotence": true},
+      "semantics": {"event_time_field": "event_ts", "lateness_tolerance_minutes": 120},
+      "compatibility": "BACKWARD"
+    }
+  }
+}

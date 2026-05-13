@@ -1,0 +1,49 @@
+{
+  "families": {
+    "temporal_bucket": {
+      "events": [
+        {"event_ts": "2026-01-01T23:30:00Z"},
+        {"event_ts": "2026-01-02T00:15:00Z"},
+        {"event_ts": "2026-01-02T13:00:00Z"},
+        {"event_ts": "2026-01-02T23:50:00Z"}
+      ],
+      "after_timezone_offset_hours": -5
+    },
+    "incremental_filter": {
+      "old_selected_rows": 1200,
+      "new_selected_rows": 10800
+    },
+    "join_cardinality": {
+      "left_key": "account_id",
+      "right_key": "account_id",
+      "left": [
+        {"order_id": 1, "account_id": "A"},
+        {"order_id": 2, "account_id": "B"},
+        {"order_id": 3, "account_id": "B"}
+      ],
+      "right": [
+        {"account_id": "A", "tier": "enterprise"},
+        {"account_id": "B", "tier": "growth"},
+        {"account_id": "B", "tier": "legacy"}
+      ]
+    },
+    "enum_domain_closure": {
+      "values": ["paid", "refunded", "partially_refunded", "chargeback"],
+      "handled_values": ["paid", "refunded"]
+    },
+    "null_default_fallback": {
+      "field": "discount_amount",
+      "fallback_value": 0,
+      "rows": [
+        {"discount_amount": 5.0},
+        {"discount_amount": null},
+        {"discount_amount": 0.0},
+        {"discount_amount": null}
+      ]
+    },
+    "materialization_cost": {
+      "old_processed_rows": 50000,
+      "new_processed_rows": 5000000
+    }
+  }
+}

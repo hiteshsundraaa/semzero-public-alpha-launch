@@ -1,0 +1,13 @@
+{
+  "consumers": [
+    {
+      "name": "revenue-windowed-aggregator",
+      "topic": "orders.events",
+      "required_fields": ["order_id", "event_ts", "amount", "status"],
+      "field_types": {"order_id": "string", "amount": "double"},
+      "event_time_field": "event_ts",
+      "partition_key": "order_id",
+      "lateness_tolerance_minutes": 120
+    }
+  ]
+}

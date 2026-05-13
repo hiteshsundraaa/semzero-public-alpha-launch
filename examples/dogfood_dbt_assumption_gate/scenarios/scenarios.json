@@ -1,0 +1,46 @@
+{
+  "scenarios": [
+    {
+      "id": "01_temporal_bucket_timezone",
+      "changed_file": "models/staging/stg_events.sql",
+      "diff": "scenarios/01_temporal_bucket_timezone.diff",
+      "expected_family": "temporal_bucket",
+      "why": "Timezone conversion can silently move records across DATE(event_ts) daily buckets."
+    },
+    {
+      "id": "02_incremental_filter_cost",
+      "changed_file": "models/marts/incremental_events.sql",
+      "diff": "scenarios/02_incremental_filter_cost.diff",
+      "expected_family": "incremental_filter",
+      "why": "DATE(updated_at) and OR expansion can weaken incremental pruning and raise scan cost."
+    },
+    {
+      "id": "03_join_fanout",
+      "changed_file": "models/marts/user_revenue.sql",
+      "diff": "scenarios/03_join_fanout.diff",
+      "expected_family": "join_cardinality",
+      "why": "Join key changed to account_id without a uniqueness guarantee, risking metric fanout."
+    },
+    {
+      "id": "04_enum_closure",
+      "changed_file": "models/staging/stg_orders.sql",
+      "diff": "scenarios/04_enum_closure.diff",
+      "expected_family": "enum_domain_closure",
+      "why": "Downstream CASE/IN logic handles paid/refunded but a new status can be silently unhandled."
+    },
+    {
+      "id": "05_null_fallback",
+      "changed_file": "models/staging/stg_orders.sql",
+      "diff": "scenarios/05_null_fallback.diff",
+      "expected_family": "null_default_fallback",
+      "why": "COALESCE(discount_amount, 0) can hide new null upstream semantics."
+    },
+    {
+      "id": "06_materialization_full_refresh",
+      "diff": "scenarios/06_materialization_full_refresh.diff",
+      "changed_file": "models/marts/incremental_events.sql",
+      "expected_family": "materialization_cost",
+      "description": "dbt materialization changes from incremental to table/full rebuild path, surfacing Snowflake/Databricks cost exposure."
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+--- a/models/staging/stg_orders.sql
++++ b/models/staging/stg_orders.sql
++ -- discount_amount is now nullable; missing upstream discounts arrive as null
++ select order_id, user_id, account_id, status, discount_amount, amount, updated_at from raw.orders

@@ -1,0 +1,61 @@
+
+# SemZero — Schema Reliability Platform
+# Quick start: docker compose up
+#
+# Services:
+#   postgres   — Sample database for Wind Tunnel / Change Gate demos
+#   semzero    — SemZero platform (watcher, CLI, API)
+#
+# Usage after `docker compose up`:
+#   docker compose exec semzero semzero crawl --db-url postgresql://semzero:semzero@postgres/demo
+#   docker compose exec semzero semzero chaos  --db-url postgresql://semzero:semzero@postgres/demo
+#   docker compose exec semzero semzero wind-tunnel \
+#       --db-url postgresql://semzero:semzero@postgres/demo \
+#       --migration /app/examples/safe_migration.sql
+
+services:
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER:     semzero
+      POSTGRES_PASSWORD: semzero
+      POSTGRES_DB:       demo
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U semzero"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  semzero:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SEMZERO_DB_URL:       postgresql://semzero:semzero@postgres/demo
+      SEMZERO_GITHUB_REPO:  ""          # Optional: owner/repo
+      SEMZERO_GITHUB_TOKEN: ""          # Optional: GitHub PAT
+      SEMZERO_SLACK_WEBHOOK: ""         # Optional: Slack webhook URL
+      PYTHONPATH: /app/src
+    volumes:
+      - ./data:/app/data
+      - .:/app
+    command: >
+      sh -c "
+        echo 'SemZero ready. Waiting for Postgres...' &&
+        sleep 2 &&
+        semzero crawl --db-url $$SEMZERO_DB_URL --output /app/data/schema_graph.json &&
+        echo 'Initial crawl complete. Platform ready.' &&
+        tail -f /dev/null
+      "
+
+volumes:
+  pgdata:

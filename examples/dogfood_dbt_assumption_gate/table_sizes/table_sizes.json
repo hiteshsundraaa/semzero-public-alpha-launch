@@ -1,0 +1,11 @@
+{
+  "incremental_events": {
+    "gb": 500
+  },
+  "stg_events": {
+    "gb": 300
+  },
+  "finance_daily_revenue": {
+    "gb": 80
+  }
+}

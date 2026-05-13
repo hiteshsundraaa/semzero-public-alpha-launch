@@ -1,0 +1,187 @@
+{
+  "metadata": {
+    "project_name": "semzero_dogfood_dbt",
+    "dbt_version": "1.8.0"
+  },
+  "nodes": {
+    "model.dogfood.stg_events": {
+      "resource_type": "model",
+      "name": "stg_events",
+      "original_file_path": "models/staging/stg_events.sql",
+      "raw_sql": "select convert_timezone('UTC','America/New_York', event_ts) as event_ts, user_id, status, updated_at from raw.events",
+      "compiled_sql": "select convert_timezone('UTC','America/New_York', event_ts) as event_ts, user_id, status, updated_at from raw.events",
+      "depends_on": {
+        "nodes": []
+      },
+      "columns": {
+        "event_ts": {
+          "data_type": "timestamp"
+        },
+        "user_id": {
+          "data_type": "integer"
+        },
+        "status": {
+          "data_type": "varchar"
+        }
+      },
+      "meta": {
+        "owner": "data-platform"
+      }
+    },
+    "model.dogfood.stg_orders": {
+      "resource_type": "model",
+      "name": "stg_orders",
+      "original_file_path": "models/staging/stg_orders.sql",
+      "raw_sql": "select order_id, user_id, account_id, status, discount_amount, amount, updated_at from raw.orders",
+      "compiled_sql": "select order_id, user_id, account_id, status, discount_amount, amount, updated_at from raw.orders",
+      "depends_on": {
+        "nodes": []
+      },
+      "columns": {
+        "order_id": {
+          "data_type": "integer"
+        },
+        "user_id": {
+          "data_type": "integer"
+        },
+        "status": {
+          "data_type": "varchar"
+        },
+        "discount_amount": {
+          "data_type": "numeric"
+        }
+      },
+      "meta": {
+        "owner": "finance-data"
+      }
+    },
+    "model.dogfood.finance_daily_revenue": {
+      "resource_type": "model",
+      "name": "finance_daily_revenue",
+      "original_file_path": "models/marts/finance_daily_revenue.sql",
+      "raw_sql": "select date(event_ts) as revenue_day, status, count(*) as orders, sum(amount) as revenue from {{ ref('stg_events') }} where status in ('paid','refunded') group by 1,2",
+      "compiled_sql": "select date(event_ts) as revenue_day, status, count(*) as orders, sum(amount) as revenue from analytics.stg_events where status in ('paid','refunded') group by 1,2",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.stg_events"
+        ]
+      },
+      "columns": {},
+      "meta": {
+        "owner": "finance-data"
+      }
+    },
+    "model.dogfood.incremental_events": {
+      "resource_type": "model",
+      "name": "incremental_events",
+      "original_file_path": "models/marts/incremental_events.sql",
+      "raw_sql": "{{ config(materialized='incremental') }} select * from {{ ref('stg_events') }} {% if is_incremental() %} where date(updated_at) >= date((select max(updated_at) from {{ this }})) or updated_at is null {% endif %}",
+      "compiled_sql": "select * from analytics.stg_events where date(updated_at) >= date((select max(updated_at) from this)) or updated_at is null",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.stg_events"
+        ]
+      },
+      "columns": {},
+      "meta": {
+        "owner": "platform-analytics"
+      }
+    },
+    "model.dogfood.user_revenue": {
+      "resource_type": "model",
+      "name": "user_revenue",
+      "original_file_path": "models/marts/user_revenue.sql",
+      "raw_sql": "select u.account_id, sum(o.amount) as revenue from {{ ref('stg_orders') }} o join {{ ref('dim_accounts') }} u on o.account_id = u.account_id group by 1",
+      "compiled_sql": "select u.account_id, sum(o.amount) as revenue from analytics.stg_orders o join analytics.dim_accounts u on o.account_id = u.account_id group by 1",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.stg_orders",
+          "model.dogfood.dim_accounts"
+        ]
+      },
+      "columns": {},
+      "meta": {
+        "owner": "growth-analytics"
+      }
+    },
+    "model.dogfood.dim_accounts": {
+      "resource_type": "model",
+      "name": "dim_accounts",
+      "original_file_path": "models/marts/dim_accounts.sql",
+      "raw_sql": "select account_id, user_id, account_tier from raw.accounts",
+      "compiled_sql": "select account_id, user_id, account_tier from raw.accounts",
+      "depends_on": {
+        "nodes": []
+      },
+      "columns": {
+        "account_id": {
+          "data_type": "integer"
+        }
+      },
+      "meta": {
+        "owner": "growth-analytics"
+      }
+    },
+    "model.dogfood.refund_adjustments": {
+      "resource_type": "model",
+      "name": "refund_adjustments",
+      "original_file_path": "models/marts/refund_adjustments.sql",
+      "raw_sql": "select order_id, case when status = 'paid' then amount when status = 'refunded' then -amount end as net_revenue from {{ ref('stg_orders') }}",
+      "compiled_sql": "select order_id, case when status = 'paid' then amount when status = 'refunded' then -amount end as net_revenue from analytics.stg_orders",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.stg_orders"
+        ]
+      },
+      "columns": {},
+      "meta": {
+        "owner": "finance-data"
+      }
+    },
+    "model.dogfood.discount_metrics": {
+      "resource_type": "model",
+      "name": "discount_metrics",
+      "original_file_path": "models/marts/discount_metrics.sql",
+      "raw_sql": "select date(updated_at) as day, sum(coalesce(discount_amount, 0)) as discount_total from {{ ref('stg_orders') }} group by 1",
+      "compiled_sql": "select date(updated_at) as day, sum(coalesce(discount_amount, 0)) as discount_total from analytics.stg_orders group by 1",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.stg_orders"
+        ]
+      },
+      "columns": {},
+      "meta": {
+        "owner": "finance-data"
+      }
+    }
+  },
+  "exposures": {
+    "exposure.dogfood.executive_revenue_dashboard": {
+      "resource_type": "exposure",
+      "name": "executive_revenue_dashboard",
+      "original_file_path": "models/exposures.yml",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.finance_daily_revenue"
+        ]
+      },
+      "owner": {
+        "name": "Finance"
+      }
+    },
+    "exposure.dogfood.finance_adjustments_dashboard": {
+      "resource_type": "exposure",
+      "name": "finance_adjustments_dashboard",
+      "original_file_path": "models/exposures.yml",
+      "depends_on": {
+        "nodes": [
+          "model.dogfood.refund_adjustments",
+          "model.dogfood.discount_metrics"
+        ]
+      },
+      "owner": {
+        "name": "Finance"
+      }
+    }
+  }
+}

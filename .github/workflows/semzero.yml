@@ -1,0 +1,310 @@
+name: SemZero — Autonomous Schema Intelligence
+
+on:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: '0 * * * *'   # hourly
+  workflow_dispatch:
+    inputs:
+      run_chaos:
+        description: 'Run Chaos Mode'
+        type: boolean
+        default: false
+      mutations:
+        description: 'Chaos mutation count'
+        default: '50'
+
+concurrency:
+  group: semzero-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  schema-watch:
+    name: Autonomous Schema Watch
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents:      write
+      pull-requests: write
+      statuses:      write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SEMZERO_GITHUB_TOKEN || github.token }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install SemZero
+        run: |
+          pip install -e .
+          pip install psycopg2-binary  # remove if not using Postgres
+          if [ -n "${{ vars.SEMZERO_EXTRA_PIP_PACKAGES }}" ]; then
+            pip install ${{ vars.SEMZERO_EXTRA_PIP_PACKAGES }}
+          fi
+
+      - name: Restore graph store
+        uses: actions/cache@v4
+        with:
+          path: data/
+          key: semzero-graph-${{ github.ref_name }}-${{ github.run_number }}
+          restore-keys: |
+            semzero-graph-${{ github.ref_name }}-
+            semzero-graph-
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Crawl schema
+        env:
+          SEMZERO_DB_URL: ${{ secrets.SEMZERO_DB_URL }}
+        run: |
+          semzero crawl \
+            --db-url  "$SEMZERO_DB_URL" \
+            --output  data/schema_graph.json \
+            --store   data/graph_store.db \
+            --label   "ci_${{ github.run_number }}"
+
+      - name: Detect drift
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          sys.path.insert(0, ".")
+          from src.crawler.graph_store import GraphStore
+          from src.crawler.drift import SchemaDriftDetector
+          from pathlib import Path
+
+          store = GraphStore("data/graph_store.db")
+          snaps = store.list_snapshots(limit=2)
+
+          if len(snaps) < 2:
+              print("First run — baseline established.")
+              Path("data/drift_report.json").write_text(
+                  '{"events":[],"summary":{"total_changes":0,"is_clean":true}}'
+              )
+          else:
+              before = store.get_snapshot(snaps[1]["id"])
+              after  = store.get_snapshot(snaps[0]["id"])
+              report = SchemaDriftDetector().diff(before, after)
+              report.save("data/drift_report.json")
+              s = report.summary()
+              print(f"Drift detected: {s['total_changes']} changes")
+              if s['total_changes']:
+                  for sev, count in s.get('by_severity',{}).items():
+                      print(f"  {sev}: {count}")
+          PYEOF
+
+      - name: Compute blast radius
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          sys.path.insert(0, ".")
+          from pathlib import Path
+
+          drift = json.loads(Path("data/drift_report.json").read_text())
+          events = drift.get("events", [])
+          critical = [e for e in events if e.get("severity") == "CRITICAL"]
+
+          if not critical:
+              print("No critical drift — skipping blast radius.")
+              Path("data/blast_radius.json").write_text('{"nodes":[]}')
+              exit(0)
+
+          from src.analytics.impact import BlastRadiusAnalyzer
+          graph = json.loads(Path("data/schema_graph.json").read_text())
+          analyzer = BlastRadiusAnalyzer(graph)
+          results = {}
+          for e in critical[:5]:
+              try:
+                  r = analyzer.analyze(e["node_id"])
+                  results[e["node_id"]] = r.to_dict()
+              except Exception as ex:
+                  print(f"  Blast radius failed for {e['node_id']}: {ex}")
+
+          Path("data/blast_radius.json").write_text(json.dumps(results, indent=2))
+          total = sum(r.get("summary",{}).get("total_impacted",0) for r in results.values())
+          print(f"Blast radius computed: {total} total downstream nodes impacted")
+          PYEOF
+
+      - name: Generate repair plan
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          sys.path.insert(0, ".")
+          from pathlib import Path
+          from src.crawler.drift import DriftEvent, ChangeType, Severity
+          from src.orchestrator.repair import RepairEngine
+
+          drift = json.loads(Path("data/drift_report.json").read_text())
+          if not drift.get("events"):
+              Path("data/repair_plan.json").write_text('{"summary":{"total_actions":0},"actions":[]}')
+              Path("data/migration.sql").write_text("-- No migrations needed\n")
+              exit(0)
+
+          events = [
+              DriftEvent(
+                  change_type=ChangeType(e["change_type"]),
+                  severity=Severity(e["severity"]),
+                  node_id=e["node_id"],
+                  before=e.get("before"),
+                  after=e.get("after"),
+                  detail=e.get("detail",""),
+              )
+              for e in drift["events"]
+          ]
+          plan = RepairEngine().build_plan(events)
+          Path("data/repair_plan.json").write_text(json.dumps(plan.to_dict(), indent=2))
+          Path("data/migration.sql").write_text(plan.render_sql_script())
+          s = plan.summary()
+          print(f"Repair plan: {s['total_actions']} actions "
+                f"({s['auto_executable']} auto, {s['needs_approval']} need approval)")
+          PYEOF
+
+      - name: Open repair PR
+        if: ${{ vars.SEMZERO_AUTO_PR != 'false' }}
+        env:
+          SEMZERO_GITHUB_TOKEN: ${{ secrets.SEMZERO_GITHUB_TOKEN }}
+          SEMZERO_GITHUB_REPO:  ${{ github.repository }}
+          SEMZERO_SLACK_WEBHOOK: ${{ secrets.SEMZERO_SLACK_WEBHOOK }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, sys
+          sys.path.insert(0, ".")
+          from pathlib import Path
+
+          drift = json.loads(Path("data/drift_report.json").read_text())
+          if not drift.get("events"):
+              print("No drift — no PR needed.")
+              exit(0)
+
+          plan  = json.loads(Path("data/repair_plan.json").read_text())
+          sql   = Path("data/migration.sql").read_text()
+          token = os.environ.get("SEMZERO_GITHUB_TOKEN","")
+          repo  = os.environ.get("SEMZERO_GITHUB_REPO","")
+          slack = os.environ.get("SEMZERO_SLACK_WEBHOOK","")
+
+          if not (token and repo):
+              print("GitHub token/repo not configured — skipping PR.")
+              exit(0)
+
+          from src.integrations.github_pr import PRBot
+          bot    = PRBot(repo=repo, token=token)
+          result = bot.open_pr(drift, plan, sql)
+
+          if result.success:
+              print(f"PR opened: {result.pr_url}")
+              if slack:
+                  from src.integrations.slack import SlackAlerter
+                  SlackAlerter(webhook_url=slack).send_drift_alert(drift, result.pr_url)
+          else:
+              print(f"PR failed: {result.error}", file=sys.stderr)
+          PYEOF
+
+      - name: Generate report
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, sys
+          sys.path.insert(0, ".")
+          from pathlib import Path
+          from src.reporting.reporter import HTMLReporter
+
+          graph  = json.loads(Path("data/schema_graph.json").read_text())
+          drift  = json.loads(Path("data/drift_report.json").read_text()) if Path("data/drift_report.json").exists() else None
+          repair = json.loads(Path("data/repair_plan.json").read_text())  if Path("data/repair_plan.json").exists() else None
+
+          path = HTMLReporter().generate(graph, drift, None, repair, output_path="data/semzero_report.html")
+          print(f"Report generated: {path}")
+          PYEOF
+
+      - name: Run Chaos Mode
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_chaos == 'true' }}
+        env:
+          SEMZERO_DB_URL: ${{ secrets.SEMZERO_DB_URL }}
+        run: |
+          semzero chaos \
+            --db-url   "$SEMZERO_DB_URL" \
+            --mutations ${{ github.event.inputs.mutations || '50' }} \
+            --output   data/chaos_report.json \
+            --html-out data/chaos_report.html
+
+      - name: Write job summary
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+
+          lines = ["## SemZero — Schema Intelligence Report\n"]
+
+          drift_path = Path("data/drift_report.json")
+          if drift_path.exists():
+              drift = json.loads(drift_path.read_text())
+              s     = drift.get("summary", {})
+              total = s.get("total_changes", 0)
+              if total == 0:
+                  lines.append("### ✅ No Schema Drift\nAll schemas clean.\n")
+              else:
+                  by_sev = s.get("by_severity", {})
+                  lines.append(f"### 🔴 {total} Schema Changes Detected\n")
+                  lines.append("| Severity | Count |")
+                  lines.append("|----------|-------|")
+                  for sev, emoji in [("CRITICAL","🔴"),("HIGH","🟠"),("MEDIUM","🟡"),("LOW","🟢")]:
+                      if count := by_sev.get(sev, 0):
+                          lines.append(f"| {emoji} {sev} | {count} |")
+                  lines.append("")
+                  lines.append("| Node | Change | Severity |")
+                  lines.append("|------|--------|----------|")
+                  for e in drift.get("events", [])[:10]:
+                      lines.append(f"| `{e['node_id']}` | `{e['change_type']}` | {e['severity']} |")
+
+          repair_path = Path("data/repair_plan.json")
+          if repair_path.exists():
+              plan = json.loads(repair_path.read_text())
+              s    = plan.get("summary", {})
+              if s.get("total_actions", 0):
+                  lines.append(f"\n**Repair plan:** {s['auto_executable']} auto · {s['needs_approval']} need approval")
+
+          chaos_path = Path("data/chaos_report.json")
+          if chaos_path.exists():
+              cr = json.loads(chaos_path.read_text())
+              cs = cr.get("summary", {})
+              lines.append(f"\n### 🔥 Chaos Report — Grade {cs.get('fragility_grade','?')}")
+              lines.append(f"Score: {cs.get('fragility_score','?')}/100 · "
+                           f"Broke: {cs.get('mutations_that_broke','?')}/{cs.get('mutations_applied','?')}")
+
+          sf = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if sf:
+              with open(sf, "a") as f:
+                  f.write("\n".join(lines))
+          print("\n".join(lines))
+          PYEOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semzero-${{ github.ref_name }}-${{ github.run_number }}
+          path: |
+            data/schema_graph.json
+            data/drift_report.json
+            data/blast_radius.json
+            data/repair_plan.json
+            data/migration.sql
+            data/semzero_report.html
+            data/chaos_report.json
+            data/chaos_report.html
+          retention-days: 30
+
+      - name: Save graph store cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/
+          key: semzero-graph-${{ github.ref_name }}-${{ github.run_number }}

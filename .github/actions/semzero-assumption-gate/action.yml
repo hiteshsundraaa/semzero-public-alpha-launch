@@ -1,0 +1,109 @@
+name: SemZero Assumption Gate
+description: Run SemZero's focused dbt Assumption Gate in a pull request and emit receipt/comment artifacts.
+inputs:
+  dbt-manifest:
+    description: Path to dbt target/manifest.json
+    required: false
+    default: target/manifest.json
+  base-ref:
+    description: Base ref to diff against, for example origin/main
+    required: false
+    default: ''
+  mode:
+    description: SemZero mode: shadow, advisory, or require-review
+    required: false
+    default: shadow
+  output-dir:
+    description: Directory for SemZero artifacts
+    required: false
+    default: data/semzero_assumption_gate
+  table-sizes:
+    description: Optional table-size metadata JSON path
+    required: false
+    default: ''
+  cost-profiles:
+    description: Optional JSON/YAML warehouse-aware cost profiles path
+    required: false
+    default: ''
+  warehouse-history:
+    description: Optional offline Snowflake/Databricks/dbt history CSV or JSON path
+    required: false
+    default: ''
+  criticality-registry:
+    description: Optional JSON/YAML business criticality registry path
+    required: false
+    default: ''
+  replay-fixtures:
+    description: Optional Replay Lite fixture/sample JSON path
+    required: false
+    default: ''
+  dbt-catalog:
+    description: Optional dbt target/catalog.json path
+    required: false
+    default: ''
+  dbt-run-results:
+    description: Optional dbt target/run_results.json path
+    required: false
+    default: ''
+  project-dir:
+    description: Optional dbt project root for compiled SQL context
+    required: false
+    default: ''
+  exceptions-file:
+    description: Optional accepted-risk/suppression exception JSONL path
+    required: false
+    default: ''
+  strict:
+    description: Exit non-zero when SemZero requires review
+    required: false
+    default: 'false'
+  write-github-summary:
+    description: Append the SemZero PR comment to GITHUB_STEP_SUMMARY
+    required: false
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Run SemZero Assumption CI
+      shell: bash
+      run: |
+        STRICT_FLAG=""
+        if [ "${{ inputs.strict }}" = "true" ]; then STRICT_FLAG="--strict"; fi
+        SUMMARY_FLAG="--write-github-summary"
+        if [ "${{ inputs.write-github-summary }}" = "false" ]; then SUMMARY_FLAG="--no-write-github-summary"; fi
+        BASE_REF_FLAG=""
+        if [ -n "${{ inputs.base-ref }}" ]; then BASE_REF_FLAG="--base-ref ${{ inputs.base-ref }}"; fi
+        TABLE_SIZES_FLAG=""
+        if [ -n "${{ inputs.table-sizes }}" ]; then TABLE_SIZES_FLAG="--table-sizes ${{ inputs.table-sizes }}"; fi
+        COST_PROFILES_FLAG=""
+        if [ -n "${{ inputs.cost-profiles }}" ]; then COST_PROFILES_FLAG="--cost-profiles ${{ inputs.cost-profiles }}"; fi
+        WAREHOUSE_HISTORY_FLAG=""
+        if [ -n "${{ inputs.warehouse-history }}" ]; then WAREHOUSE_HISTORY_FLAG="--warehouse-history ${{ inputs.warehouse-history }}"; fi
+        CRITICALITY_FLAG=""
+        if [ -n "${{ inputs.criticality-registry }}" ]; then CRITICALITY_FLAG="--criticality-registry ${{ inputs.criticality-registry }}"; fi
+        REPLAY_FLAG=""
+        if [ -n "${{ inputs.replay-fixtures }}" ]; then REPLAY_FLAG="--replay-fixtures ${{ inputs.replay-fixtures }}"; fi
+        CATALOG_FLAG=""
+        if [ -n "${{ inputs.dbt-catalog }}" ]; then CATALOG_FLAG="--dbt-catalog ${{ inputs.dbt-catalog }}"; fi
+        RUN_RESULTS_FLAG=""
+        if [ -n "${{ inputs.dbt-run-results }}" ]; then RUN_RESULTS_FLAG="--dbt-run-results ${{ inputs.dbt-run-results }}"; fi
+        PROJECT_DIR_FLAG=""
+        if [ -n "${{ inputs.project-dir }}" ]; then PROJECT_DIR_FLAG="--project-dir ${{ inputs.project-dir }}"; fi
+        EXCEPTIONS_FLAG=""
+        if [ -n "${{ inputs.exceptions-file }}" ]; then EXCEPTIONS_FLAG="--exceptions-file ${{ inputs.exceptions-file }}"; fi
+        semzero assumption-ci \
+          --dbt-manifest "${{ inputs.dbt-manifest }}" \
+          $BASE_REF_FLAG \
+          --mode "${{ inputs.mode }}" \
+          --output-dir "${{ inputs.output-dir }}" \
+          $TABLE_SIZES_FLAG \
+          $COST_PROFILES_FLAG \
+          $WAREHOUSE_HISTORY_FLAG \
+          $CRITICALITY_FLAG \
+          $REPLAY_FLAG \
+          $CATALOG_FLAG \
+          $RUN_RESULTS_FLAG \
+          $PROJECT_DIR_FLAG \
+          $EXCEPTIONS_FLAG \
+          $SUMMARY_FLAG \
+          $STRICT_FLAG

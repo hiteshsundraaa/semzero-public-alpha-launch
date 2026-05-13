@@ -1,0 +1,21 @@
+nodes:
+  exposure.dogfood.executive_revenue_dashboard:
+    severity: BOARD_CRITICAL
+    label: Executive Revenue Dashboard
+    reason: Board-facing revenue dashboard used in monthly operating review.
+  model.dogfood.finance_daily_revenue:
+    severity: REVENUE_CRITICAL
+    label: Finance Daily Revenue Model
+    reason: Feeds finance revenue reporting and executive exposure.
+  exposure.dogfood.finance_adjustments_dashboard:
+    severity: EXEC_CRITICAL
+    label: Finance Adjustments Dashboard
+    reason: Executive finance adjustments review surface.
+  model.dogfood.refund_adjustments:
+    severity: REVENUE_CRITICAL
+    label: Refund Adjustments Model
+    reason: Revenue/refund adjustments pipeline.
+  model.dogfood.discount_metrics:
+    severity: REVENUE_CRITICAL
+    label: Discount Metrics Model
+    reason: Revenue discount reporting pipeline.

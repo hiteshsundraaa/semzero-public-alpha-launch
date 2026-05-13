@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "project_name": "killer_demo",
+    "dbt_version": "1.7.0"
+  },
+  "nodes": {
+    "model.killer_demo.stg_events": {
+      "resource_type": "model",
+      "name": "stg_events",
+      "original_file_path": "models/staging/stg_events.sql",
+      "raw_sql": "select event_id, user_id, event_ts, amount_usd from raw.events",
+      "compiled_sql": "select event_id, user_id, event_ts, amount_usd from raw.events",
+      "depends_on": {
+        "nodes": []
+      },
+      "columns": {
+        "event_ts": {
+          "data_type": "timestamp"
+        },
+        "amount_usd": {
+          "data_type": "numeric"
+        }
+      },
+      "meta": {
+        "owner": "Data Platform"
+      }
+    },
+    "model.killer_demo.finance_daily_revenue": {
+      "resource_type": "model",
+      "name": "finance_daily_revenue",
+      "original_file_path": "models/marts/finance_daily_revenue.sql",
+      "raw_sql": "select date(event_ts) as reporting_day, sum(amount_usd) as revenue_usd, count(*) as event_count from {{ ref('stg_events') }} group by 1",
+      "compiled_sql": "select date(event_ts) as reporting_day, sum(amount_usd) as revenue_usd, count(*) as event_count from analytics.stg_events group by 1",
+      "depends_on": {
+        "nodes": [
+          "model.killer_demo.stg_events"
+        ]
+      },
+      "columns": {
+        "reporting_day": {
+          "data_type": "date"
+        },
+        "revenue_usd": {
+          "data_type": "numeric"
+        }
+      },
+      "meta": {
+        "owner": "Finance Analytics",
+        "business_criticality": "BOARD_CRITICAL"
+      }
+    }
+  },
+  "exposures": {
+    "exposure.killer_demo.executive_revenue_dashboard": {
+      "resource_type": "exposure",
+      "name": "executive_revenue_dashboard",
+      "original_file_path": "models/exposures.yml",
+      "depends_on": {
+        "nodes": [
+          "model.killer_demo.finance_daily_revenue"
+        ]
+      },
+      "owner": {
+        "name": "CFO Office"
+      },
+      "meta": {
+        "business_criticality": "BOARD_CRITICAL"
+      }
+    }
+  }
+}

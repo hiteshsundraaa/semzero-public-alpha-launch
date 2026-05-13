@@ -1,0 +1,170 @@
+name: SemZero Change Gate
+
+on:
+  pull_request:
+    paths:
+      - '**/migrations/**'
+      - '**/alembic/versions/**'
+      - 'prisma/migrations/**'
+      - 'prisma/schema.prisma'
+      - 'db/**/*.sql'
+      - 'migrations/**/*.sql'
+      - 'schema/**/*.sql'
+      - 'dbt/**'
+      - 'models/**/*.sql'
+      - 'models/**/*.yml'
+
+concurrency:
+  group: semzero-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  change-gate:
+    name: Schema Change Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      pull-requests: write
+      statuses:      write
+      contents:      read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install SemZero
+        run: |
+          pip install -e .
+          pip install psycopg2-binary  # remove if not using Postgres
+          if [ -n "${{ vars.SEMZERO_EXTRA_PIP_PACKAGES }}" ]; then
+            pip install ${{ vars.SEMZERO_EXTRA_PIP_PACKAGES }}
+          fi
+
+      - name: Restore schema graph cache
+        uses: actions/cache@v4
+        with:
+          path: data/
+          key: semzero-graph-${{ github.base_ref }}
+          restore-keys: semzero-graph-
+
+      - name: Crawl schema
+        env:
+          SEMZERO_DB_URL: ${{ secrets.SEMZERO_DB_URL }}
+        run: |
+          mkdir -p data
+          if [ -f data/schema_graph.json ]; then
+            echo "Using cached graph. Crawling for fresh snapshot..."
+          fi
+          semzero crawl \
+            --db-url    "$SEMZERO_DB_URL" \
+            --output    data/schema_graph.json \
+            --store     data/graph_store.db
+
+      - name: Detect drift
+        env:
+          SEMZERO_DB_URL: ${{ secrets.SEMZERO_DB_URL }}
+        run: |
+          # Get the two most recent snapshots and diff them
+          python3 - <<'PYEOF'
+          import json, sys
+          sys.path.insert(0, ".")
+          from src.crawler.graph_store import GraphStore
+          from src.crawler.drift import SchemaDriftDetector
+          from pathlib import Path
+
+          store = GraphStore("data/graph_store.db")
+          snaps = store.list_snapshots(limit=2)
+
+          if len(snaps) < 2:
+              print("Only one snapshot — no drift to detect (first run).")
+              Path("data/drift_report.json").write_text(
+                  '{"events":[],"summary":{"total_changes":0,"is_clean":true}}'
+              )
+              sys.exit(0)
+
+          before = store.get_snapshot(snaps[1]["id"])
+          after  = store.get_snapshot(snaps[0]["id"])
+          report = SchemaDriftDetector().diff(before, after)
+          report.save("data/drift_report.json")
+          s = report.summary()
+          print(f"Drift: {s['total_changes']} changes ({s.get('by_severity',{})})")
+          PYEOF
+
+      - name: Run Change Gate
+        id: gate
+        env:
+          SEMZERO_GITHUB_TOKEN: ${{ secrets.SEMZERO_GITHUB_TOKEN }}
+          SEMZERO_GITHUB_REPO:  ${{ github.repository }}
+          SEMZERO_DB_URL:       ${{ secrets.SEMZERO_DB_URL }}
+        run: |
+          semzero gate \
+            --drift     data/drift_report.json \
+            --graph     data/schema_graph.json \
+            --output    data/gate_result.json \
+            --pr        ${{ github.event.pull_request.number }} \
+            --repo      "$GITHUB_REPOSITORY" \
+            --token     "$SEMZERO_GITHUB_TOKEN" \
+            ${{ vars.SEMZERO_GATE_STRICT == 'true' && '--strict' || '' }} \
+            ${{ vars.SEMZERO_WIND_TUNNEL == 'true' && '--wind-tunnel' || '' }} \
+            || EXIT_CODE=$?
+
+          # Write verdict to GitHub output
+          python3 -c "
+          import json, os
+          r = json.loads(open('data/gate_result.json').read())
+          v = r.get('verdict','UNKNOWN')
+          with open(os.environ.get('GITHUB_OUTPUT',''), 'a') as f:
+              f.write(f'verdict={v}\n')
+          print(f'Verdict: {v}')
+          "
+          exit ${EXIT_CODE:-0}
+
+      - name: Write job summary
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+          from pathlib import Path
+
+          p = Path("data/gate_result.json")
+          if not p.exists():
+              exit(0)
+
+          r = json.loads(p.read_text())
+          v = r.get("verdict","?")
+          e = {"SAFE":"✅","NEEDS_REVIEW":"⚠️","BLOCK":"🚫"}.get(v, "❓")
+
+          lines = [
+              f"## {e} SemZero Change Gate — {v}\n",
+              f"**Changes assessed:** {len(r.get('assessments',[]))}  "
+              f"**Blast radius:** {r.get('total_blast_radius',0)} nodes\n",
+          ]
+          for b in r.get("blocked_by", []):
+              lines.append(f"- 🚫 {b}")
+          for rv in r.get("review_reasons", []):
+              lines.append(f"- ⚠️ {rv}")
+
+          sf = os.environ.get("GITHUB_STEP_SUMMARY", "")
+          if sf:
+              with open(sf, "a") as f:
+                  f.write("\n".join(lines))
+          print("\n".join(lines))
+          PYEOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semzero-gate-pr${{ github.event.pull_request.number }}-${{ github.run_number }}
+          path: |
+            data/gate_result.json
+            data/drift_report.json
+            data/wind_tunnel*.json
+          retention-days: 30

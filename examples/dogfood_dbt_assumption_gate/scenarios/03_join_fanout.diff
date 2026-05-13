@@ -1,0 +1,5 @@
+--- a/models/marts/user_revenue.sql
++++ b/models/marts/user_revenue.sql
+- join {{ ref('dim_users') }} u on o.user_id = u.user_id
++ join {{ ref('dim_accounts') }} u on o.account_id = u.account_id
++ -- account_id is not guaranteed unique per user yet

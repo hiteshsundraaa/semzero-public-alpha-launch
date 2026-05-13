@@ -1,0 +1,5 @@
+engine,model_name,query_text,bytes_scanned,credits_used,cost_usd,total_elapsed_time
+snowflake,incremental_events,"select * from analytics.incremental_events where event_ts >= current_date - 1",536870912000,1.8,42,185
+snowflake,incremental_events,"select * from analytics.incremental_events where event_ts >= current_date - 1",510027366400,1.6,38,172
+snowflake,incremental_events,"select * from analytics.incremental_events where event_ts >= current_date - 1",558345748480,1.9,45,201
+snowflake,finance_daily_revenue,"select * from analytics.finance_daily_revenue",85899345920,0.7,18,90

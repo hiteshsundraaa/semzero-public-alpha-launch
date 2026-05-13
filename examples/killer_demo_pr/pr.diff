@@ -1,0 +1,12 @@
+diff --git a/models/staging/stg_events.sql b/models/staging/stg_events.sql
+index 55d0fd1..881f8aa 100644
+--- a/models/staging/stg_events.sql
++++ b/models/staging/stg_events.sql
+@@ -1,6 +1,6 @@
+ select
+   event_id,
+   user_id,
+-  event_ts,
++  convert_timezone('UTC', 'America/New_York', event_ts) as event_ts,
+   amount_usd
+ from raw.events

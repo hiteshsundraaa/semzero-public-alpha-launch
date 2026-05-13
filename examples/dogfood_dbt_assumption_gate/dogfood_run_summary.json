@@ -1,0 +1,85 @@
+{
+  "scenario_results": [
+    {
+      "id": "01_temporal_bucket_timezone",
+      "expected_family": "temporal_bucket",
+      "families": [
+        "enum_domain_closure",
+        "incremental_filter",
+        "temporal_bucket"
+      ],
+      "verdict": "REQUIRE_REVIEW",
+      "finding_count": 4,
+      "receipt": "examples/dogfood_dbt_assumption_gate/receipts/01_temporal_bucket_timezone.receipt.json",
+      "comment": "examples/dogfood_dbt_assumption_gate/comments/01_temporal_bucket_timezone.comment.md"
+    },
+    {
+      "id": "02_incremental_filter_cost",
+      "expected_family": "incremental_filter",
+      "families": [
+        "incremental_filter",
+        "null_default_fallback",
+        "temporal_bucket"
+      ],
+      "verdict": "REQUIRE_REVIEW",
+      "finding_count": 3,
+      "receipt": "examples/dogfood_dbt_assumption_gate/receipts/02_incremental_filter_cost.receipt.json",
+      "comment": "examples/dogfood_dbt_assumption_gate/comments/02_incremental_filter_cost.comment.md"
+    },
+    {
+      "id": "03_join_fanout",
+      "expected_family": "join_cardinality",
+      "families": [
+        "join_cardinality"
+      ],
+      "verdict": "REQUIRE_REVIEW",
+      "finding_count": 1,
+      "receipt": "examples/dogfood_dbt_assumption_gate/receipts/03_join_fanout.receipt.json",
+      "comment": "examples/dogfood_dbt_assumption_gate/comments/03_join_fanout.comment.md"
+    },
+    {
+      "id": "04_enum_closure",
+      "expected_family": "enum_domain_closure",
+      "families": [
+        "enum_domain_closure",
+        "join_cardinality"
+      ],
+      "verdict": "REQUIRE_REVIEW",
+      "finding_count": 2,
+      "receipt": "examples/dogfood_dbt_assumption_gate/receipts/04_enum_closure.receipt.json",
+      "comment": "examples/dogfood_dbt_assumption_gate/comments/04_enum_closure.comment.md"
+    },
+    {
+      "id": "05_null_fallback",
+      "expected_family": "null_default_fallback",
+      "families": [
+        "enum_domain_closure",
+        "join_cardinality",
+        "null_default_fallback"
+      ],
+      "verdict": "REQUIRE_REVIEW",
+      "finding_count": 3,
+      "receipt": "examples/dogfood_dbt_assumption_gate/receipts/05_null_fallback.receipt.json",
+      "comment": "examples/dogfood_dbt_assumption_gate/comments/05_null_fallback.comment.md"
+    },
+    {
+      "id": "06_materialization_full_refresh",
+      "expected_family": "materialization_cost",
+      "families": [
+        "incremental_filter",
+        "materialization_cost",
+        "null_default_fallback",
+        "temporal_bucket"
+      ],
+      "verdict": "REQUIRE_REVIEW",
+      "finding_count": 4,
+      "receipt": "examples/dogfood_dbt_assumption_gate/receipts/06_materialization_full_refresh.receipt.json",
+      "comment": "examples/dogfood_dbt_assumption_gate/comments/06_materialization_full_refresh.comment.md"
+    }
+  ],
+  "dashboard": "examples/dogfood_dbt_assumption_gate/assumption_dashboard.json",
+  "precision_eval": "examples/dogfood_dbt_assumption_gate/assumption_precision_eval.json",
+  "lineage": "examples/dogfood_dbt_assumption_gate/assumption_lineage.json",
+  "decay": "examples/dogfood_dbt_assumption_gate/assumption_decay.json",
+  "memory": "examples/dogfood_dbt_assumption_gate/assumption_memory.json"
+}

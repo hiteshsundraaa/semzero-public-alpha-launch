@@ -1,0 +1,7 @@
+{
+  "runs": [
+    {"engine":"databricks","model_name":"user_revenue","run_duration_seconds":320,"dbu_hours":1.4,"cost_usd":12.5},
+    {"engine":"databricks","model_name":"user_revenue","run_duration_seconds":340,"dbu_hours":1.5,"cost_usd":13.0},
+    {"engine":"databricks","model_name":"session_metrics","run_duration_seconds":900,"dbu_hours":5.2,"cost_usd":46.0}
+  ]
+}

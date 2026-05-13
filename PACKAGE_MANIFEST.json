@@ -1,0 +1,16 @@
+{
+  "new_features": [
+    "streaming-shadow CLI command",
+    "StreamingGate schema evolution and consumer contract checker",
+    "Kafka/Confluent-style topic config risk checks",
+    "event-time and lateness assumption detection",
+    "streaming results appended to shadow run ledger and dashboard"
+  ],
+  "notes": "Public-alpha readiness: CI workflows, release checks, community files, smoke tests, version/dependency cleanup, and README trust layer.",
+  "package": "semzero",
+  "public_surface": "dbt PR Assumption Gate",
+  "release_focus": "public_alpha_trust_layer",
+  "semzero_core_v1_14_note": "Adds advisory accepted-risk/suppression exceptions with reason, expiry, dashboard debt tracking, and PR-comment visibility.",
+  "semzero_core_v1_16": "real dbt artifact hardening: catalog/run_results/compiled_path enrichment for the focused Assumption Gate",
+  "version": "0.8.0a2"
+}

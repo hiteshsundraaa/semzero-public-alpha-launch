@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a focused improvement to SemZero
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        SemZero's public product focus is the dbt PR Assumption Gate. Please explain how the feature improves assumption detection, validation, blast radius, receipts, PR review, calibration, or noise control.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What painful dbt PR review problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: dropdown
+    id: focus
+    attributes:
+      label: Product-core fit
+      options:
+        - dbt assumption detection
+        - Replay Lite validation
+        - blast radius / lineage
+        - receipts / evidence
+        - GitHub PR workflow
+        - feedback / exceptions / calibration
+        - experimental / lab only
+    validations:
+      required: true

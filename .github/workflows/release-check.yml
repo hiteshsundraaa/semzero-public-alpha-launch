@@ -1,0 +1,39 @@
+name: Release Check
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+      - "semzero/**"
+      - "semzero_lab/**"
+      - "README.md"
+      - "docs/**"
+      - "tests/**"
+
+permissions:
+  contents: read
+
+jobs:
+  package-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+      - name: Build package
+        run: python -m build
+      - name: Check package metadata
+        run: twine check dist/*
+      - name: Test installed wheel
+        run: |
+          python -m venv /tmp/semzero-wheel-test
+          source /tmp/semzero-wheel-test/bin/activate
+          pip install dist/*.whl
+          semzero --help
+          semzero-lab --help

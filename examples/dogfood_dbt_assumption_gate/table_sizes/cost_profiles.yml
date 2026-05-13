@@ -1,0 +1,21 @@
+models:
+  incremental_events:
+    engine: snowflake
+    table_size_gb: 500
+    run_frequency: daily
+    rough_cost_per_tb_scanned_usd: 24
+  finance_daily_revenue:
+    engine: snowflake
+    table_size_gb: 80
+    run_frequency: daily
+    rough_cost_per_run_usd: 18
+  user_revenue:
+    engine: databricks
+    table_size_gb: 250
+    run_frequency: daily
+    rough_cost_per_run_usd: 12
+  session_metrics:
+    engine: databricks
+    table_size_gb: 800
+    run_frequency: hourly
+    rough_cost_per_run_usd: 8

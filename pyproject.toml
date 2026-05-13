@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semzero"
+version = "0.8.0a2"
+description = "Assumption-aware dbt PR gate for hidden SQL assumptions, blast-radius receipts, and shadow-mode CI comments."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+
+dependencies = [
+    # Core graph & data
+    "networkx>=3.2",
+    "sqlalchemy>=2.0",
+    "pandas>=2.0",
+
+    # HTTP (GitHub + Slack)
+    "requests>=2.31",
+
+    # Templating
+    "jinja2>=3.1",
+
+    # CLI
+    "click>=8.1",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Database connectors
+postgres   = ["psycopg2-binary>=2.9"]
+snowflake  = ["snowflake-sqlalchemy>=1.5"]
+bigquery   = ["sqlalchemy-bigquery>=1.9"]
+mysql      = ["mysqlclient>=2.2"]
+databricks = ["databricks-sql-connector[sqlalchemy]>=3.2"]
+
+# ML / GNN
+ml = [
+    "torch>=2.2",
+    "torch-geometric>=2.5",
+]
+
+# Development
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "pytest-timeout>=2.3",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+# Install everything
+all = [
+    "semzero[postgres,snowflake,databricks,ml,dev]"
+]
+
+[project.scripts]
+semzero = "semzero.cli:cli"
+semzero-lab = "semzero_lab.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["semzero*", "semzero_lab*", "src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E401", "E402", "E501", "E701", "E702", "E731", "E741",
+    "F401", "F402", "F541", "F841", "F821", "F811",
+    "I001",
+    "UP006", "UP007", "UP024", "UP035", "UP037", "UP045",
+    "B007", "B009", "B010", "B904", "B905",
+    "W291", "W292", "W293",
+]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
+warn_return_any = false
+check_untyped_defs = false
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

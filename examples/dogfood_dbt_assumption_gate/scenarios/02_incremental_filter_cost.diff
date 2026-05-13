@@ -1,0 +1,4 @@
+--- a/models/marts/incremental_events.sql
++++ b/models/marts/incremental_events.sql
+- where updated_at > (select max(updated_at) from {{ this }})
++ where date(updated_at) >= date((select max(updated_at) from {{ this }})) or updated_at is null

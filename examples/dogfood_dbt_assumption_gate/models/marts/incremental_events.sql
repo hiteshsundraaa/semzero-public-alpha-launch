@@ -1,0 +1,1 @@
+{{ config(materialized='incremental') }} select * from {{ ref('stg_events') }} {% if is_incremental() %} where date(updated_at) >= date((select max(updated_at) from {{ this }})) or updated_at is null {% endif %}

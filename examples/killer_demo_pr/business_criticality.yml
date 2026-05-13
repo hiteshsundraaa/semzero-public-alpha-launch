@@ -1,0 +1,9 @@
+resources:
+  model.killer_demo.finance_daily_revenue:
+    severity: BOARD_CRITICAL
+    owner: Finance Analytics
+    reason: Executive revenue dashboard depends on daily reporting buckets.
+  exposure.killer_demo.executive_revenue_dashboard:
+    severity: BOARD_CRITICAL
+    owner: CFO Office
+    reason: Board-facing revenue reporting.

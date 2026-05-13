@@ -1,0 +1,636 @@
+{
+  "receipt_kind": "dbt_assumption_gate_v1_25",
+  "schema_version": "semzero.evidence.v1",
+  "adapter": "dbt_assumption_gate",
+  "domain": "data",
+  "semzero_version": "0.8.0a2",
+  "mode": "shadow",
+  "verdict": "REQUIRE_REVIEW",
+  "generated_at": "2026-05-13T10:11:38.337776+00:00",
+  "metadata": {
+    "dbt_manifest_path": "/Users/hiteshsundra/Downloads/semzero_public_alpha_launch/examples/killer_demo_pr/target/manifest.json",
+    "adapter_scope": "core_data_only_v1_25",
+    "future_adapter_note": "Receipt uses typed domain-neutral nodes so infra/app adapters can be added later without changing consumers."
+  },
+  "dbt_manifest_path": "/Users/hiteshsundra/Downloads/semzero_public_alpha_launch/examples/killer_demo_pr/target/manifest.json",
+  "changed_files": [
+    "models/staging/stg_events.sql"
+  ],
+  "changed_resources": [
+    {
+      "node_type": "dbt_model",
+      "type": "dbt_model",
+      "name": "stg_events",
+      "domain": "data",
+      "unique_id": "model.killer_demo.stg_events",
+      "path": "models/staging/stg_events.sql",
+      "owner": "Data Platform",
+      "metadata": {
+        "dbt_resource_type": "model",
+        "tags": [],
+        "relation_name": "",
+        "runtime": {},
+        "artifact_meta": {},
+        "business_severity": "INTERNAL_LOW",
+        "business_label": "Stg Events",
+        "business_reason": "staging/raw/supporting-data keyword: 'staging'",
+        "criticality_source": "keyword_inference",
+        "business_rank": 2
+      },
+      "business_severity": "INTERNAL_LOW",
+      "business_label": "Stg Events",
+      "business_reason": "staging/raw/supporting-data keyword: 'staging'",
+      "criticality_source": "keyword_inference"
+    }
+  ],
+  "summary": {
+    "finding_count": 1,
+    "families": {
+      "temporal_bucket": 1
+    },
+    "severity_counts": {
+      "critical": 1
+    },
+    "changed_resource_count": 1,
+    "blast_radius_resource_count": 2,
+    "estimated_extra_cost_per_run_usd": null,
+    "estimated_extra_cost_per_month_usd": null,
+    "risk_score_total": 100,
+    "confidence_counts": {
+      "high": 1
+    },
+    "active_triggers": {
+      "temporal_bucket": [
+        "a/models/staging/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/s",
+        "ing/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_ev",
+        "+++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_event"
+      ],
+      "join_cardinality": [
+        "100644 --- a/models/staging/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.even",
+        "York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_events select event_id, user_id, event_ts, amount_usd from raw.events"
+      ]
+    },
+    "top_findings": [
+      {
+        "id": "AG-TEMPORAL-BUCKET-8F338A2696",
+        "stable_id": "AG-TEMPORAL-BUCKET-8F338A2696",
+        "legacy_id": "AG-TEMPORAL-BUCKET-001",
+        "fingerprint": "8f338a2696743358d6fc47c86a7ce36c61ff6ecd",
+        "domain": "data",
+        "adapter": "dbt_assumption_gate",
+        "family": "temporal_bucket",
+        "severity": "critical",
+        "assumption": "Timestamp-to-date logic produces stable reporting buckets across this change.",
+        "trigger": "A related timestamp/timezone/date-bucketing change is present in the PR.",
+        "why_it_matters": "Events near day boundaries can silently move between reporting days, changing dashboards without query failures.",
+        "source": {
+          "node_type": "dbt_resource",
+          "type": "dbt_resource",
+          "name": "finance_daily_revenue",
+          "unique_id": "model.killer_demo.finance_daily_revenue",
+          "domain": "data",
+          "path": "models/marts/finance_daily_revenue.sql"
+        },
+        "source_resource": "model.killer_demo.finance_daily_revenue",
+        "source_path": "models/marts/finance_daily_revenue.sql",
+        "evidence_excerpt": "select date(event_ts) as reporting_day, sum(amount_usd) as revenue_usd, count(*) as event_count from analytics.stg_events group by 1",
+        "changed_resources": [
+          "model.killer_demo.stg_events"
+        ],
+        "blast_radius": [
+          {
+            "node_type": "dbt_exposure",
+            "type": "dbt_exposure",
+            "name": "executive_revenue_dashboard",
+            "domain": "data",
+            "unique_id": "exposure.killer_demo.executive_revenue_dashboard",
+            "path": "models/exposures.yml",
+            "owner": "CFO Office",
+            "criticality": "high",
+            "metadata": {
+              "dbt_resource_type": "exposure",
+              "tags": [],
+              "relation_name": "",
+              "runtime": {},
+              "artifact_meta": {},
+              "business_severity": "BOARD_CRITICAL",
+              "business_label": "Executive Revenue Dashboard",
+              "business_reason": "board/investor reporting keyword: 'board'",
+              "criticality_source": "keyword_inference",
+              "business_rank": 7
+            },
+            "business_severity": "BOARD_CRITICAL",
+            "business_label": "Executive Revenue Dashboard",
+            "business_reason": "board/investor reporting keyword: 'board'",
+            "criticality_source": "keyword_inference"
+          }
+        ],
+        "recommended_check": "Run a before/after bucket comparison by day and timezone for the affected timestamp over a recent representative window, especially midnight-boundary records.",
+        "cost_estimate": {},
+        "trigger_evidence": [
+          "a/models/staging/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/s",
+          "ing/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_ev",
+          "+++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_event",
+          "events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_events select event_id, user_id",
+          "-1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_events select event_id, user_id, event_ts, a"
+        ],
+        "confidence": "high",
+        "noise_controls": [
+          "pattern emitted only because a related changed-resource trigger was present",
+          "finding is tied to changed resource or transitive downstream resource",
+          "blast radius attached; finding is not a standalone SQL lint warning"
+        ],
+        "risk_score": 100,
+        "pattern_detail": {
+          "pattern_type": "timezone_or_date_boundary_bucket",
+          "granularity": "day",
+          "timezone_conversion_in_changed_context": true,
+          "day_boundary_bucket": true,
+          "boundary_risk": "records near midnight can move between reporting buckets"
+        },
+        "business_impact": {
+          "highest_business_severity": "BOARD_CRITICAL",
+          "business_severity_counts": {
+            "BOARD_CRITICAL": 1,
+            "EXEC_CRITICAL": 0,
+            "REVENUE_CRITICAL": 0,
+            "CUSTOMER_FACING": 0,
+            "INTERNAL_HIGH": 0,
+            "INTERNAL_LOW": 0,
+            "UNKNOWN": 0
+          },
+          "business_critical_node_count": 1,
+          "top_business_labels": [
+            "Executive Revenue Dashboard"
+          ],
+          "top_business_nodes": [
+            {
+              "node_type": "dbt_exposure",
+              "type": "dbt_exposure",
+              "name": "executive_revenue_dashboard",
+              "domain": "data",
+              "unique_id": "exposure.killer_demo.executive_revenue_dashboard",
+              "path": "models/exposures.yml",
+              "owner": "CFO Office",
+              "criticality": "high",
+              "metadata": {
+                "dbt_resource_type": "exposure",
+                "tags": [],
+                "relation_name": "",
+                "runtime": {},
+                "artifact_meta": {},
+                "business_severity": "BOARD_CRITICAL",
+                "business_label": "Executive Revenue Dashboard",
+                "business_reason": "board/investor reporting keyword: 'board'",
+                "criticality_source": "keyword_inference",
+                "business_rank": 7
+              },
+              "business_severity": "BOARD_CRITICAL",
+              "business_label": "Executive Revenue Dashboard",
+              "business_reason": "board/investor reporting keyword: 'board'",
+              "criticality_source": "keyword_inference"
+            }
+          ],
+          "summary": "This finding reaches board critical assets: Executive Revenue Dashboard."
+        },
+        "control_coverage": {
+          "kind": "assumption_control_coverage_v1",
+          "status": "weak",
+          "present_controls": [],
+          "missing_controls": [
+            "before/after temporal bucket comparison"
+          ],
+          "experimental_note": "Cybersec/DevOps-inspired control coverage: advisory-only, used to improve calibration without blocking."
+        },
+        "incident_chain": [
+          {
+            "step": 1,
+            "kind": "changed_or_scanned_resource",
+            "node": "model.killer_demo.finance_daily_revenue",
+            "label": "finance_daily_revenue"
+          },
+          {
+            "step": 2,
+            "kind": "hidden_assumption",
+            "family": "temporal_bucket"
+          },
+          {
+            "step": 3,
+            "kind": "blast_radius_node",
+            "node": "exposure.killer_demo.executive_revenue_dashboard",
+            "business_severity": "BOARD_CRITICAL"
+          }
+        ],
+        "exception": {
+          "kind": "semzero_assumption_exception_match_v1",
+          "state": "none",
+          "active": [],
+          "expired": [],
+          "advisory_note": "No exception ledger supplied."
+        },
+        "assumption_diff": {
+          "kind": "semzero_assumption_diff_v1",
+          "drift_type": "temporal_bucket_semantics",
+          "old_assumption": "Timestamp-to-date bucketing remained stable across reporting boundaries.",
+          "new_assumption": "Timestamp/timezone/date-bucketing semantics may move records across reporting boundaries.",
+          "drift_summary": "Daily/hourly bucket meaning may differ before vs after this PR.",
+          "removed_context": [
+            "event_ts,"
+          ],
+          "added_context": [
+            "convert_timezone('UTC', 'America/New_York', event_ts) as event_ts,"
+          ],
+          "has_explicit_before_after_diff": true,
+          "pattern_type": "timezone_or_date_boundary_bucket",
+          "source_resource": "model.killer_demo.finance_daily_revenue",
+          "evidence_excerpt": "select date(event_ts) as reporting_day, sum(amount_usd) as revenue_usd, count(*) as event_count from analytics.stg_events group by 1",
+          "advisory_note": "Assumption diff is static PR-context evidence, not behavioral replay."
+        },
+        "replay_fidelity": {
+          "kind": "semzero_replay_fidelity_v1",
+          "score": 0.82,
+          "level": "high_static_history_fidelity",
+          "coverage": "high static history fidelity",
+          "basis": [
+            "Assumption Validation Replay Lite ran for this finding",
+            "compiled SQL available",
+            "downstream blast radius attached",
+            "why-now trigger evidence available",
+            "family-specific detector detail available"
+          ],
+          "limitations": [
+            "No dbt catalog metadata for this resource.",
+            "No dbt run_results runtime context for this resource.",
+            "No offline warehouse-history calibration matched this finding."
+          ],
+          "replay_ran": true,
+          "validation_replay_status": "drift_detected",
+          "next_validation": "Run before/after bucket counts by date/timezone and inspect boundary-moving rows.",
+          "honesty_note": "Fidelity reflects available static/history evidence plus targeted Replay Lite when supplied; Replay Lite is not a full warehouse clone."
+        },
+        "validation_replay": {
+          "kind": "semzero_assumption_validation_replay_lite_v1",
+          "family": "temporal_bucket",
+          "status": "drift_detected",
+          "replay_ran": true,
+          "drift_metric": 50.0,
+          "drift_unit": "percent_rows_moved_bucket",
+          "summary": "Using supplied local sample evidence, 2/4 sampled rows moved reporting bucket under the supplied timezone/date-boundary replay.",
+          "evidence_source": "local_fixture_or_sample",
+          "requires_live_database": false,
+          "requires_credentials": false,
+          "evidence": {
+            "sample_rows": 4,
+            "moved_rows": 2,
+            "offset_hours": -5.0
+          },
+          "limitations": [
+            "Uses supplied sample rows, not full production data."
+          ],
+          "honesty_note": "Replay Lite is a targeted local assumption check from supplied fixture/sample data; it does not connect to a live warehouse, require credentials, clone production data, or run production queries."
+        },
+        "detector_version": "assumption_gate_core_v1_25"
+      }
+    ],
+    "business_impact": {
+      "highest_business_severity": "BOARD_CRITICAL",
+      "business_severity_counts": {
+        "BOARD_CRITICAL": 1,
+        "EXEC_CRITICAL": 0,
+        "REVENUE_CRITICAL": 0,
+        "CUSTOMER_FACING": 0,
+        "INTERNAL_HIGH": 0,
+        "INTERNAL_LOW": 0,
+        "UNKNOWN": 0
+      },
+      "business_critical_node_count": 1,
+      "top_business_labels": [
+        "Executive Revenue Dashboard"
+      ],
+      "top_business_nodes": [
+        {
+          "node_type": "dbt_exposure",
+          "type": "dbt_exposure",
+          "name": "executive_revenue_dashboard",
+          "domain": "data",
+          "unique_id": "exposure.killer_demo.executive_revenue_dashboard",
+          "path": "models/exposures.yml",
+          "owner": "CFO Office",
+          "criticality": "high",
+          "metadata": {
+            "dbt_resource_type": "exposure",
+            "tags": [],
+            "relation_name": "",
+            "runtime": {},
+            "artifact_meta": {},
+            "business_severity": "BOARD_CRITICAL",
+            "business_label": "Executive Revenue Dashboard",
+            "business_reason": "board/investor reporting keyword: 'board'",
+            "criticality_source": "keyword_inference",
+            "business_rank": 7
+          },
+          "business_severity": "BOARD_CRITICAL",
+          "business_label": "Executive Revenue Dashboard",
+          "business_reason": "board/investor reporting keyword: 'board'",
+          "criticality_source": "keyword_inference"
+        }
+      ],
+      "summary": "This finding reaches board critical assets: Executive Revenue Dashboard."
+    },
+    "control_coverage_counts": {
+      "weak": 1
+    },
+    "exception_summary": {
+      "active_exception_match_count": 0,
+      "expired_exception_match_count": 0,
+      "supplied_exception_count": 0,
+      "guardrail": "Exceptions are advisory accepted-risk/suppression annotations; findings remain in the receipt."
+    },
+    "assumption_diff_summary": {
+      "kind": "semzero_assumption_diff_summary_v1",
+      "finding_count": 1,
+      "explicit_before_after_diff_count": 1,
+      "drift_type_counts": {
+        "temporal_bucket_semantics": 1
+      },
+      "note": "Static assumption diffing explains old-vs-new assumed behavior; behavioral replay is not yet run."
+    },
+    "replay_fidelity_summary": {
+      "kind": "semzero_replay_fidelity_summary_v1",
+      "average_score": 0.82,
+      "level_counts": {
+        "high_static_history_fidelity": 1
+      },
+      "replay_ran_count": 1,
+      "finding_count": 1,
+      "honesty_note": "Scores reflect evidence quality and replay readiness; v1.20 does not run behavioral replay."
+    },
+    "validation_replay_summary": {
+      "kind": "semzero_assumption_validation_replay_lite_summary_v1",
+      "finding_count": 1,
+      "replay_ran_count": 1,
+      "drift_detected_count": 1,
+      "status_counts": {
+        "drift_detected": 1
+      },
+      "family_replay_counts": {
+        "temporal_bucket": 1
+      },
+      "examples": [
+        {
+          "stable_id": "AG-TEMPORAL-BUCKET-8F338A2696",
+          "family": "temporal_bucket",
+          "summary": "Using supplied local sample evidence, 2/4 sampled rows moved reporting bucket under the supplied timezone/date-boundary replay.",
+          "drift_metric": 50.0,
+          "drift_unit": "percent_rows_moved_bucket"
+        }
+      ],
+      "honesty_note": "Replay Lite validates targeted assumptions from supplied local fixture/sample data; it is not full warehouse replay."
+    },
+    "domains": {
+      "data": 1
+    },
+    "adapters": {
+      "dbt_assumption_gate": 1
+    },
+    "design_scope": "core_only_adapter_ready",
+    "detector_version": "assumption_gate_core_v1_25",
+    "dbt_artifact_context": {
+      "kind": "dbt_artifact_context_v1",
+      "resource_count": 3,
+      "compiled_sql_resource_count": 2,
+      "raw_sql_resource_count": 2,
+      "catalog_enriched_resource_count": 0,
+      "run_results_enriched_resource_count": 0,
+      "offline_warehouse_history_profile_count": 0,
+      "warehouse_history_matched_resource_count": 0,
+      "test_resource_count": 0,
+      "exposure_resource_count": 1,
+      "owner_tagged_resource_count": 3,
+      "warnings": [],
+      "precision_note": "Real dbt manifest/catalog/run_results plus offline warehouse history exports improve blast radius, control coverage, and cost calibration without live warehouse credentials."
+    }
+  },
+  "findings": [
+    {
+      "id": "AG-TEMPORAL-BUCKET-8F338A2696",
+      "stable_id": "AG-TEMPORAL-BUCKET-8F338A2696",
+      "legacy_id": "AG-TEMPORAL-BUCKET-001",
+      "fingerprint": "8f338a2696743358d6fc47c86a7ce36c61ff6ecd",
+      "domain": "data",
+      "adapter": "dbt_assumption_gate",
+      "family": "temporal_bucket",
+      "severity": "critical",
+      "assumption": "Timestamp-to-date logic produces stable reporting buckets across this change.",
+      "trigger": "A related timestamp/timezone/date-bucketing change is present in the PR.",
+      "why_it_matters": "Events near day boundaries can silently move between reporting days, changing dashboards without query failures.",
+      "source": {
+        "node_type": "dbt_resource",
+        "type": "dbt_resource",
+        "name": "finance_daily_revenue",
+        "unique_id": "model.killer_demo.finance_daily_revenue",
+        "domain": "data",
+        "path": "models/marts/finance_daily_revenue.sql"
+      },
+      "source_resource": "model.killer_demo.finance_daily_revenue",
+      "source_path": "models/marts/finance_daily_revenue.sql",
+      "evidence_excerpt": "select date(event_ts) as reporting_day, sum(amount_usd) as revenue_usd, count(*) as event_count from analytics.stg_events group by 1",
+      "changed_resources": [
+        "model.killer_demo.stg_events"
+      ],
+      "blast_radius": [
+        {
+          "node_type": "dbt_exposure",
+          "type": "dbt_exposure",
+          "name": "executive_revenue_dashboard",
+          "domain": "data",
+          "unique_id": "exposure.killer_demo.executive_revenue_dashboard",
+          "path": "models/exposures.yml",
+          "owner": "CFO Office",
+          "criticality": "high",
+          "metadata": {
+            "dbt_resource_type": "exposure",
+            "tags": [],
+            "relation_name": "",
+            "runtime": {},
+            "artifact_meta": {},
+            "business_severity": "BOARD_CRITICAL",
+            "business_label": "Executive Revenue Dashboard",
+            "business_reason": "board/investor reporting keyword: 'board'",
+            "criticality_source": "keyword_inference",
+            "business_rank": 7
+          },
+          "business_severity": "BOARD_CRITICAL",
+          "business_label": "Executive Revenue Dashboard",
+          "business_reason": "board/investor reporting keyword: 'board'",
+          "criticality_source": "keyword_inference"
+        }
+      ],
+      "recommended_check": "Run a before/after bucket comparison by day and timezone for the affected timestamp over a recent representative window, especially midnight-boundary records.",
+      "cost_estimate": {},
+      "trigger_evidence": [
+        "a/models/staging/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/s",
+        "ing/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_ev",
+        "+++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_event",
+        "events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_events select event_id, user_id",
+        "-1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events models/staging/stg_events.sql stg_events select event_id, user_id, event_ts, a"
+      ],
+      "confidence": "high",
+      "noise_controls": [
+        "pattern emitted only because a related changed-resource trigger was present",
+        "finding is tied to changed resource or transitive downstream resource",
+        "blast radius attached; finding is not a standalone SQL lint warning"
+      ],
+      "risk_score": 100,
+      "pattern_detail": {
+        "pattern_type": "timezone_or_date_boundary_bucket",
+        "granularity": "day",
+        "timezone_conversion_in_changed_context": true,
+        "day_boundary_bucket": true,
+        "boundary_risk": "records near midnight can move between reporting buckets"
+      },
+      "business_impact": {
+        "highest_business_severity": "BOARD_CRITICAL",
+        "business_severity_counts": {
+          "BOARD_CRITICAL": 1,
+          "EXEC_CRITICAL": 0,
+          "REVENUE_CRITICAL": 0,
+          "CUSTOMER_FACING": 0,
+          "INTERNAL_HIGH": 0,
+          "INTERNAL_LOW": 0,
+          "UNKNOWN": 0
+        },
+        "business_critical_node_count": 1,
+        "top_business_labels": [
+          "Executive Revenue Dashboard"
+        ],
+        "top_business_nodes": [
+          {
+            "node_type": "dbt_exposure",
+            "type": "dbt_exposure",
+            "name": "executive_revenue_dashboard",
+            "domain": "data",
+            "unique_id": "exposure.killer_demo.executive_revenue_dashboard",
+            "path": "models/exposures.yml",
+            "owner": "CFO Office",
+            "criticality": "high",
+            "metadata": {
+              "dbt_resource_type": "exposure",
+              "tags": [],
+              "relation_name": "",
+              "runtime": {},
+              "artifact_meta": {},
+              "business_severity": "BOARD_CRITICAL",
+              "business_label": "Executive Revenue Dashboard",
+              "business_reason": "board/investor reporting keyword: 'board'",
+              "criticality_source": "keyword_inference",
+              "business_rank": 7
+            },
+            "business_severity": "BOARD_CRITICAL",
+            "business_label": "Executive Revenue Dashboard",
+            "business_reason": "board/investor reporting keyword: 'board'",
+            "criticality_source": "keyword_inference"
+          }
+        ],
+        "summary": "This finding reaches board critical assets: Executive Revenue Dashboard."
+      },
+      "control_coverage": {
+        "kind": "assumption_control_coverage_v1",
+        "status": "weak",
+        "present_controls": [],
+        "missing_controls": [
+          "before/after temporal bucket comparison"
+        ],
+        "experimental_note": "Cybersec/DevOps-inspired control coverage: advisory-only, used to improve calibration without blocking."
+      },
+      "incident_chain": [
+        {
+          "step": 1,
+          "kind": "changed_or_scanned_resource",
+          "node": "model.killer_demo.finance_daily_revenue",
+          "label": "finance_daily_revenue"
+        },
+        {
+          "step": 2,
+          "kind": "hidden_assumption",
+          "family": "temporal_bucket"
+        },
+        {
+          "step": 3,
+          "kind": "blast_radius_node",
+          "node": "exposure.killer_demo.executive_revenue_dashboard",
+          "business_severity": "BOARD_CRITICAL"
+        }
+      ],
+      "exception": {
+        "kind": "semzero_assumption_exception_match_v1",
+        "state": "none",
+        "active": [],
+        "expired": [],
+        "advisory_note": "No exception ledger supplied."
+      },
+      "assumption_diff": {
+        "kind": "semzero_assumption_diff_v1",
+        "drift_type": "temporal_bucket_semantics",
+        "old_assumption": "Timestamp-to-date bucketing remained stable across reporting boundaries.",
+        "new_assumption": "Timestamp/timezone/date-bucketing semantics may move records across reporting boundaries.",
+        "drift_summary": "Daily/hourly bucket meaning may differ before vs after this PR.",
+        "removed_context": [
+          "event_ts,"
+        ],
+        "added_context": [
+          "convert_timezone('UTC', 'America/New_York', event_ts) as event_ts,"
+        ],
+        "has_explicit_before_after_diff": true,
+        "pattern_type": "timezone_or_date_boundary_bucket",
+        "source_resource": "model.killer_demo.finance_daily_revenue",
+        "evidence_excerpt": "select date(event_ts) as reporting_day, sum(amount_usd) as revenue_usd, count(*) as event_count from analytics.stg_events group by 1",
+        "advisory_note": "Assumption diff is static PR-context evidence, not behavioral replay."
+      },
+      "replay_fidelity": {
+        "kind": "semzero_replay_fidelity_v1",
+        "score": 0.82,
+        "level": "high_static_history_fidelity",
+        "coverage": "high static history fidelity",
+        "basis": [
+          "Assumption Validation Replay Lite ran for this finding",
+          "compiled SQL available",
+          "downstream blast radius attached",
+          "why-now trigger evidence available",
+          "family-specific detector detail available"
+        ],
+        "limitations": [
+          "No dbt catalog metadata for this resource.",
+          "No dbt run_results runtime context for this resource.",
+          "No offline warehouse-history calibration matched this finding."
+        ],
+        "replay_ran": true,
+        "validation_replay_status": "drift_detected",
+        "next_validation": "Run before/after bucket counts by date/timezone and inspect boundary-moving rows.",
+        "honesty_note": "Fidelity reflects available static/history evidence plus targeted Replay Lite when supplied; Replay Lite is not a full warehouse clone."
+      },
+      "validation_replay": {
+        "kind": "semzero_assumption_validation_replay_lite_v1",
+        "family": "temporal_bucket",
+        "status": "drift_detected",
+        "replay_ran": true,
+        "drift_metric": 50.0,
+        "drift_unit": "percent_rows_moved_bucket",
+        "summary": "Using supplied local sample evidence, 2/4 sampled rows moved reporting bucket under the supplied timezone/date-boundary replay.",
+        "evidence_source": "local_fixture_or_sample",
+        "requires_live_database": false,
+        "requires_credentials": false,
+        "evidence": {
+          "sample_rows": 4,
+          "moved_rows": 2,
+          "offset_hours": -5.0
+        },
+        "limitations": [
+          "Uses supplied sample rows, not full production data."
+        ],
+        "honesty_note": "Replay Lite is a targeted local assumption check from supplied fixture/sample data; it does not connect to a live warehouse, require credentials, clone production data, or run production queries."
+      },
+      "detector_version": "assumption_gate_core_v1_25"
+    }
+  ]
+}

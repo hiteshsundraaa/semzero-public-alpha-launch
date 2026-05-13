@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments
+.venv/
+venv/
+.env
+
+# Generated SemZero runtime artifacts
+data/
+validation_artifacts/
+*.db
+*.sqlite
+*.sqlite3
+
+# Dogfood generated outputs
+examples/dogfood_dbt_assumption_gate/receipts/
+examples/dogfood_dbt_assumption_gate/comments/
+examples/dogfood_dbt_assumption_gate/*dashboard*.json
+examples/dogfood_dbt_assumption_gate/*dashboard*.md
+examples/dogfood_dbt_assumption_gate/*report*.json
+examples/dogfood_dbt_assumption_gate/*report*.md
+examples/dogfood_dbt_assumption_gate/*lineage*.json
+examples/dogfood_dbt_assumption_gate/*lineage*.md
+examples/dogfood_dbt_assumption_gate/*decay*.json
+examples/dogfood_dbt_assumption_gate/*decay*.md
+examples/dogfood_dbt_assumption_gate/*memory*.json
+examples/dogfood_dbt_assumption_gate/*memory*.md

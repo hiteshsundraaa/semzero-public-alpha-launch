@@ -1,0 +1,20 @@
+{
+  "topics": {
+    "orders.events": {
+      "schema": {
+        "type": "record",
+        "fields": [
+          {"name": "order_id", "type": "int"},
+          {"name": "customer_id", "type": "string"},
+          {"name": "ingested_at", "type": "long"},
+          {"name": "status", "type": "string", "symbols": ["created", "paid"]},
+          {"name": "amount", "type": "string"},
+          {"name": "region", "type": "string"}
+        ]
+      },
+      "config": {"partition_key": "customer_id", "retention_ms": 86400000, "schema_compatibility": "NONE", "enable_idempotence": false},
+      "semantics": {"event_time_field": "ingested_at", "lateness_tolerance_minutes": 15},
+      "compatibility": "NONE"
+    }
+  }
+}

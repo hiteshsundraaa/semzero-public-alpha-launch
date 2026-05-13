@@ -1,0 +1,29 @@
+name: SemZero Quickstart
+
+on:
+  pull_request:
+    paths:
+      - '**/*.sql'
+      - 'models/**/*.sql'
+      - 'models/**/*.yml'
+      - 'dbt/**'
+
+jobs:
+  semzero:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install SemZero
+        run: |
+          pip install -e .
+          if [ -n "${{ vars.SEMZERO_EXTRA_PIP_PACKAGES }}" ]; then pip install ${{ vars.SEMZERO_EXTRA_PIP_PACKAGES }}; fi
+      - name: SemZero shadow check
+        env:
+          SEMZERO_DB_URL: ${{ secrets.SEMZERO_DB_URL }}
+        run: |
+          mkdir -p data
+          semzero commands
+          semzero shadow --graph data/schema_graph.json --drift data/drift_report.json --db-url "$SEMZERO_DB_URL" || true
