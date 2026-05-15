@@ -103,7 +103,7 @@ runs:
         base_ref="${GITHUB_BASE_REF:-main}"
         manifest_flag=""
         if [ -f "${{ inputs.manifest-path }}" ]; then
-          manifest_flag="--manifest ${{ inputs.manifest-path }}"
+          manifest_flag="--dbt-manifest ${{ inputs.manifest-path }}"
         fi
         optional_flags=""
         if [ -f "${{ inputs.policy-path }}" ]; then

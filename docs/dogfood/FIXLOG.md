@@ -74,3 +74,24 @@ The second GitHub Action wrapper test reached `semzero assumption-ci` but failed
 
 ```text
 Error: No such option: --artifact-dir (Possible options: --output-dir, --project-dir)
+
+### Action wrapper test note — manifest option mismatch
+
+The third GitHub Action wrapper test reached `semzero assumption-ci` but failed:
+
+```text
+Error: No such option: --manifest Did you mean --dbt-manifest?
+
+### Action wrapper test note — manifest option mismatch
+
+The third GitHub Action wrapper test reached `semzero assumption-ci` but failed:
+
+```text
+Error: No such option: --manifest Did you mean --dbt-manifest?
+## 3. Commit, push, get the new full SHA
+
+```bash
+git add action.yml docs/dogfood/FIXLOG.md
+git commit -m "Use dbt manifest option in GitHub Action wrapper"
+git push origin main
+git rev-parse HEAD
