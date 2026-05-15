@@ -106,9 +106,9 @@ runs:
           manifest_flag="--dbt-manifest ${{ inputs.manifest-path }}"
         fi
         optional_flags=""
-        if [ -f "${{ inputs.policy-path }}" ]; then
-          optional_flags="$optional_flags --policy ${{ inputs.policy-path }}"
-        fi
+        # Current SemZero alpha CLI does not yet expose --policy on assumption-ci.
+        # The action keeps policy-path as an input for the future public contract,
+        # but does not pass it until the CLI supports it.
         semzero assumption-ci \
           --project-dir . \
           --base-ref "$base_ref" \
