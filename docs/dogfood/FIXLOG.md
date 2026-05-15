@@ -118,3 +118,18 @@ The fallback-comment patch made `action.yml` invalid:
 
 ```text
 While scanning an anchor or alias, did not find expected alphabetic or numeric character.
+
+### Action wrapper test note — heredoc shell syntax failure
+
+The action loaded and posted/updated the sticky PR comment, but the fallback normalization step failed:
+
+```text
+syntax error: unexpected end of file
+Root cause:
+The fallback comment writer used a heredoc inside a composite action YAML run: | block. YAML indentation and shell heredoc terminator alignment made the script fragile.
+
+Fix:
+Replaced the heredoc/Python fallback writer with a plain printf block that writes comment.md without heredoc syntax.
+
+Product lesson:
+Composite action fallback paths must avoid fragile shell heredocs. The fallback comment path is user-facing reliability infrastructure and should be boring.

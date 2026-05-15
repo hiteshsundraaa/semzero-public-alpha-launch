@@ -129,32 +129,25 @@ runs:
         find "$artifact_dir" -maxdepth 2 -type f -print || true
 
         if [ ! -s "$artifact_dir/comment.md" ]; then
-          python - <<'PY_COMMENT'
-          from pathlib import Path
-
-          artifact_dir = Path("${{ inputs.artifact-dir }}")
-          artifact_dir.mkdir(parents=True, exist_ok=True)
-          comment = artifact_dir / "comment.md"
-
-          comment.write_text("""## SemZero Assumption Gate
-
-          **Verdict:** UNKNOWN  
-          **Mode:** shadow  
-          **Fidelity:** Action wrapper diagnostic
-
-          SemZero ran, but the Action wrapper did not receive a non-empty `comment.md` artifact.
-
-          What this means:
-          - The GitHub Action installed and executed SemZero.
-          - The PR comment handoff failed.
-          - Evidence artifacts are attached to this workflow run.
-
-          Next action:
-          Check the SemZero artifact zip and the `Run SemZero Assumption Gate` logs.
-
-          This is a SemZero alpha wrapper issue, not a dbt project failure.
-          """, encoding="utf-8")
-          PY_COMMENT
+          {
+            printf '%s\n' '## SemZero Assumption Gate'
+            printf '%s\n' ''
+            printf '%s\n' '**Verdict:** UNKNOWN'
+            printf '%s\n' '**Mode:** shadow'
+            printf '%s\n' '**Fidelity:** Action wrapper diagnostic'
+            printf '%s\n' ''
+            printf '%s\n' 'SemZero ran, but the Action wrapper did not receive a non-empty `comment.md` artifact.'
+            printf '%s\n' ''
+            printf '%s\n' 'What this means:'
+            printf '%s\n' '- The GitHub Action installed and executed SemZero.'
+            printf '%s\n' '- The PR comment handoff failed.'
+            printf '%s\n' '- Evidence artifacts are attached to this workflow run.'
+            printf '%s\n' ''
+            printf '%s\n' 'Next action:'
+            printf '%s\n' 'Check the SemZero artifact zip and the `Run SemZero Assumption Gate` logs.'
+            printf '%s\n' ''
+            printf '%s\n' 'This is a SemZero alpha wrapper issue, not a dbt project failure.'
+          } > "$artifact_dir/comment.md"
         fi
 
     - name: Upload SemZero artifacts
