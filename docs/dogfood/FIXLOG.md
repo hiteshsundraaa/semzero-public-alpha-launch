@@ -58,3 +58,12 @@ This removes the need for users to fork SemZero or manually set a package-source
 - Users may still need dbt adapter packages for manifest-backed analysis.
 - Static fallback still needs to become first-class so missing profiles/adapters do not block first value.
 - The action should eventually live in a dedicated `semzero/assumption-gate-action` repo or be published under an official org.
+
+### Action wrapper test note — CLI option mismatch
+
+During the first GitHub Action wrapper test, the action resolved correctly and installed SemZero, but failed at runtime:
+
+```text
+Error: No such option: --repo
+Error: No such option: --repo
+eof

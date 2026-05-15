@@ -110,7 +110,6 @@ runs:
           optional_flags="$optional_flags --policy ${{ inputs.policy-path }}"
         fi
         semzero assumption-ci \
-          --repo . \
           --base-ref "$base_ref" \
           --artifact-dir "${{ inputs.artifact-dir }}" \
           $manifest_flag \
