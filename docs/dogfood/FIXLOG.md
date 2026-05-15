@@ -111,3 +111,10 @@ Added a `Normalize SemZero comment artifact` step that:
 
 Product lesson:
 The PR comment is the core product surface. A successful CI run with no visible PR comment is still a product failure. The Action wrapper must never silently succeed without a user-visible comment or diagnostic.
+
+### Action wrapper test note — YAML heredoc indentation broke action manifest
+
+The fallback-comment patch made `action.yml` invalid:
+
+```text
+While scanning an anchor or alias, did not find expected alphabetic or numeric character.

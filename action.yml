@@ -129,7 +129,7 @@ runs:
         find "$artifact_dir" -maxdepth 2 -type f -print || true
 
         if [ ! -s "$artifact_dir/comment.md" ]; then
-          cat > "$artifact_dir/comment.md" <<'EOF'
+          cat > "$artifact_dir/comment.md" <<'SEMZERO_COMMENT_EOF'
 ## SemZero Assumption Gate
 
 **Verdict:** UNKNOWN  
@@ -147,7 +147,7 @@ Next action:
 Check the SemZero artifact zip and the `Run SemZero Assumption Gate` logs.
 
 This is a SemZero alpha wrapper issue, not a dbt project failure.
-EOF
+SEMZERO_COMMENT_EOF
         fi
 
     - name: Upload SemZero artifacts
