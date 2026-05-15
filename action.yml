@@ -129,25 +129,32 @@ runs:
         find "$artifact_dir" -maxdepth 2 -type f -print || true
 
         if [ ! -s "$artifact_dir/comment.md" ]; then
-          cat > "$artifact_dir/comment.md" <<'SEMZERO_COMMENT_EOF'
-## SemZero Assumption Gate
+          python - <<'PY_COMMENT'
+          from pathlib import Path
 
-**Verdict:** UNKNOWN  
-**Mode:** shadow  
-**Fidelity:** Action wrapper diagnostic
+          artifact_dir = Path("${{ inputs.artifact-dir }}")
+          artifact_dir.mkdir(parents=True, exist_ok=True)
+          comment = artifact_dir / "comment.md"
 
-SemZero ran, but the Action wrapper did not receive a non-empty `comment.md` artifact.
+          comment.write_text("""## SemZero Assumption Gate
 
-What this means:
-- The GitHub Action installed and executed SemZero.
-- The PR comment handoff failed.
-- Evidence artifacts are attached to this workflow run.
+          **Verdict:** UNKNOWN  
+          **Mode:** shadow  
+          **Fidelity:** Action wrapper diagnostic
 
-Next action:
-Check the SemZero artifact zip and the `Run SemZero Assumption Gate` logs.
+          SemZero ran, but the Action wrapper did not receive a non-empty `comment.md` artifact.
 
-This is a SemZero alpha wrapper issue, not a dbt project failure.
-SEMZERO_COMMENT_EOF
+          What this means:
+          - The GitHub Action installed and executed SemZero.
+          - The PR comment handoff failed.
+          - Evidence artifacts are attached to this workflow run.
+
+          Next action:
+          Check the SemZero artifact zip and the `Run SemZero Assumption Gate` logs.
+
+          This is a SemZero alpha wrapper issue, not a dbt project failure.
+          """, encoding="utf-8")
+          PY_COMMENT
         fi
 
     - name: Upload SemZero artifacts
