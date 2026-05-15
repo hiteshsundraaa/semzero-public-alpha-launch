@@ -399,13 +399,30 @@ semzero report --search-dir data --format html --output data/semzero_receipt.htm
 @click.option(
     "--force", is_flag=True, default=False, help="Overwrite starter files if they already exist."
 )
-def init_assumption_ci(output_dir: str, force: bool):
+@click.option(
+    "--profile",
+    "profile_adapter",
+    type=click.Choice(["none", "duckdb"]),
+    default="none",
+    show_default=True,
+    help="Optionally scaffold a minimal dbt CI profile. Use duckdb for public/sample repos without warehouse credentials.",
+)
+def init_assumption_ci(output_dir: str, force: bool, profile_adapter: str):
     """Scaffold the focused dbt Assumption Gate GitHub PR workflow."""
     root = Path(output_dir)
     workflow_dir = root / ".github" / "workflows"
     semzero_dir = root / ".semzero"
     workflow_dir.mkdir(parents=True, exist_ok=True)
     semzero_dir.mkdir(parents=True, exist_ok=True)
+    dbt_profile_name = "default"
+    dbt_project_path = root / "dbt_project.yml"
+    if dbt_project_path.exists():
+        for line in dbt_project_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("profile:"):
+                dbt_profile_name = stripped.split(":", 1)[1].split("#", 1)[0].strip().strip("'\"") or "default"
+                break
+
 
     workflow = """name: SemZero Assumption Gate
 
@@ -432,6 +449,7 @@ concurrency:
 
 env:
   SEMZERO_ARTIFACT_DIR: data/semzero_assumption_gate
+__SEMZERO_DBT_PROFILES_ENV__
 
 jobs:
   assumption-gate:
@@ -545,6 +563,11 @@ jobs:
               });
             }
 """
+    workflow = workflow.replace(
+        "__SEMZERO_DBT_PROFILES_ENV__",
+        "  DBT_PROFILES_DIR: .semzero" if profile_adapter != "none" else "",
+    )
+
     policy = """# SemZero Assumption Gate starter policy
 mode: shadow
 # Keep this focused: dbt Assumption Gate first. Future adapters should plug into
@@ -597,6 +620,18 @@ model.finance_daily_revenue:
         semzero_dir / "business_criticality.example.yml": criticality_example,
         semzero_dir / "assumption_exceptions.example.jsonl": exceptions_example,
     }
+    if profile_adapter == "duckdb":
+        files[semzero_dir / "profiles.yml"] = f"""# Minimal dbt profile for SemZero CI dogfooding.
+# Uses DuckDB so public/sample repos can compile without warehouse credentials.
+{dbt_profile_name}:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: semzero_ci.duckdb
+      threads: 4
+"""
+
     for path, payload in files.items():
         if path.exists() and not force:
             raise click.ClickException(
@@ -606,6 +641,9 @@ model.finance_daily_revenue:
     click.echo("\n  SemZero Assumption Gate CI scaffolded")
     click.echo(f"  Workflow → {workflow_dir / 'semzero_assumption_gate.yml'}")
     click.echo(f"  Policy → {semzero_dir / 'assumption_gate_policy.yml'}")
+    if profile_adapter == "duckdb":
+        click.echo(f"  dbt CI profile → {semzero_dir / 'profiles.yml'}")
+        click.echo("  Recommended GitHub variable: SEMZERO_EXTRA_PIP_PACKAGES=dbt-core dbt-duckdb")
     click.echo("\n  Next steps:")
     click.echo("    1. Make sure CI can create target/manifest.json with dbt compile.")
     click.echo("    2. Commit .github/workflows/semzero_assumption_gate.yml and .semzero/.")

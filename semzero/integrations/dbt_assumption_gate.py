@@ -1901,6 +1901,51 @@ def _comment_display_severity(finding: AssumptionFindingV1) -> str:
     return severity
 
 
+def _clean_comment_snippet(raw: str, max_chars: int = 220) -> str:
+    """Return a reviewer-readable evidence snippet.
+
+    Avoids starting/ending mid-token where possible and makes truncation explicit.
+    This is PR-comment polish only; raw evidence remains preserved in the JSON receipt.
+    """
+    text = " ".join(str(raw or "").replace("\n", " ").split())
+    if not text:
+        return ""
+
+    # Prefer starting at a useful SQL-ish boundary instead of mid-token snippets like "ders as".
+    lowered = text.lower()
+    boundary_candidates = [
+        "with ",
+        "select ",
+        "from ",
+        "join ",
+        "orders as",
+        "customers as",
+        "customer_orders",
+        "payments as",
+    ]
+    start = 0
+    for marker in boundary_candidates:
+        idx = lowered.find(marker)
+        if 0 <= idx <= 80:
+            start = idx
+            break
+
+    prefix = "… " if start > 0 else ""
+    text = text[start:]
+
+    if len(text) <= max_chars:
+        return prefix + text
+
+    cut = text[:max_chars]
+    # Avoid ending mid-token.
+    last_space = cut.rfind(" ")
+    if last_space >= int(max_chars * 0.65):
+        cut = cut[:last_space]
+
+    return prefix + cut.rstrip(" ,.;:") + "…"
+
+
+
 def _comment_why_now(finding: AssumptionFindingV1) -> str:
     explicit = bool(getattr(finding, "explicit_before_after_context", False) or getattr(finding, "has_explicit_diff", False))
     raw = str(getattr(finding, "why_now", "") or "").strip()
@@ -1909,7 +1954,7 @@ def _comment_why_now(finding: AssumptionFindingV1) -> str:
         return raw
 
     if raw:
-        snippet = raw[:220].replace("\n", " ")
+        snippet = _clean_comment_snippet(raw)
         return (
             "This PR touched a dbt resource connected to this assumption. "
             "Explicit before/after semantic diff was not available, so SemZero used "
@@ -2074,7 +2119,7 @@ def _comment_why_now(finding: AssumptionFindingV1) -> str:
         return raw[:320]
 
     if raw:
-        snippet = raw[:220].replace("\n", " ")
+        snippet = _clean_comment_snippet(raw)
         return (
             "This PR touched a dbt resource connected to this assumption. "
             "Explicit before/after semantic diff was not available, so SemZero used "
