@@ -113,8 +113,42 @@ runs:
           --project-dir . \
           --base-ref "$base_ref" \
           --output-dir "${{ inputs.artifact-dir }}" \
+          --mode "${{ inputs.mode }}" \
           $manifest_flag \
           $optional_flags
+
+    - name: Normalize SemZero comment artifact
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        artifact_dir="${{ inputs.artifact-dir }}"
+        mkdir -p "$artifact_dir"
+
+        echo "SemZero artifact directory:"
+        find "$artifact_dir" -maxdepth 2 -type f -print || true
+
+        if [ ! -s "$artifact_dir/comment.md" ]; then
+          cat > "$artifact_dir/comment.md" <<'EOF'
+## SemZero Assumption Gate
+
+**Verdict:** UNKNOWN  
+**Mode:** shadow  
+**Fidelity:** Action wrapper diagnostic
+
+SemZero ran, but the Action wrapper did not receive a non-empty `comment.md` artifact.
+
+What this means:
+- The GitHub Action installed and executed SemZero.
+- The PR comment handoff failed.
+- Evidence artifacts are attached to this workflow run.
+
+Next action:
+Check the SemZero artifact zip and the `Run SemZero Assumption Gate` logs.
+
+This is a SemZero alpha wrapper issue, not a dbt project failure.
+EOF
+        fi
 
     - name: Upload SemZero artifacts
       if: ${{ always() && hashFiles(format('{0}/**', inputs.artifact-dir)) != '' }}

@@ -95,3 +95,19 @@ git add action.yml docs/dogfood/FIXLOG.md
 git commit -m "Use dbt manifest option in GitHub Action wrapper"
 git push origin main
 git rev-parse HEAD
+
+### Action wrapper test note — blank comment artifact
+
+The GitHub Action wrapper reached success, uploaded artifacts, but no sticky PR comment appeared because `comment.md` was blank.
+
+Root cause:
+The wrapper assumed successful `semzero assumption-ci` execution always produced a non-empty `comment.md`. That assumption was false.
+
+Fix:
+Added a `Normalize SemZero comment artifact` step that:
+- lists artifact contents,
+- ensures `comment.md` exists,
+- creates a diagnostic fallback comment if SemZero produces a blank/missing comment file.
+
+Product lesson:
+The PR comment is the core product surface. A successful CI run with no visible PR comment is still a product failure. The Action wrapper must never silently succeed without a user-visible comment or diagnostic.
