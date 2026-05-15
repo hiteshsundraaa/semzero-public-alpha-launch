@@ -1,0 +1,150 @@
+name: SemZero Assumption Gate
+description: PR review for hidden dbt assumptions in dbt model changes.
+
+inputs:
+  mode:
+    description: "SemZero policy mode. Usually shadow during rollout."
+    required: false
+    default: "shadow"
+  policy-path:
+    description: "Path to SemZero policy file."
+    required: false
+    default: ".semzero/assumption_gate_policy.yml"
+  manifest-path:
+    description: "Path to dbt manifest.json if your CI already produces one."
+    required: false
+    default: "target/manifest.json"
+  artifact-dir:
+    description: "Where SemZero writes comment/evidence artifacts."
+    required: false
+    default: "data/semzero_assumption_gate"
+  extra-pip-packages:
+    description: "Optional dbt packages/adapters, e.g. 'dbt-core dbt-duckdb' or 'dbt-core dbt-snowflake'."
+    required: false
+    default: ""
+  dbt-profiles-dir:
+    description: "Optional dbt profiles directory. For generated DuckDB scaffold use '.semzero'."
+    required: false
+    default: ""
+  run-dbt-compile:
+    description: "Try dbt deps and dbt compile before SemZero. Set false if you provide manifest-path."
+    required: false
+    default: "true"
+  post-pr-comment:
+    description: "Post or update the sticky SemZero PR comment."
+    required: false
+    default: "true"
+  python-version:
+    description: "Python version used to run SemZero."
+    required: false
+    default: "3.11"
+
+outputs:
+  artifact-dir:
+    description: "Directory containing SemZero output artifacts."
+    value: ${{ inputs.artifact-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python for SemZero
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install SemZero from pinned action ref
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m pip install --upgrade pip
+        python -m pip install "$GITHUB_ACTION_PATH"
+        if [ -n "${{ inputs.extra-pip-packages }}" ]; then
+          python -m pip install ${{ inputs.extra-pip-packages }}
+        fi
+
+    - name: Prepare SemZero environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "${{ inputs.artifact-dir }}"
+        echo "SEMZERO_ARTIFACT_DIR=${{ inputs.artifact-dir }}" >> "$GITHUB_ENV"
+        if [ -n "${{ inputs.dbt-profiles-dir }}" ]; then
+          echo "DBT_PROFILES_DIR=${{ inputs.dbt-profiles-dir }}" >> "$GITHUB_ENV"
+        fi
+
+    - name: Try dbt manifest build
+      if: ${{ inputs.run-dbt-compile == 'true' }}
+      shell: bash
+      run: |
+        set +e
+        mkdir -p "${{ inputs.artifact-dir }}"
+        if [ -f "${{ inputs.manifest-path }}" ]; then
+          echo "SemZero: manifest already exists at ${{ inputs.manifest-path }}"
+          exit 0
+        fi
+        if [ ! -f dbt_project.yml ]; then
+          echo "SemZero: no dbt_project.yml found; skipping dbt compile." | tee "${{ inputs.artifact-dir }}/dbt_compile.log"
+          exit 0
+        fi
+        echo "SemZero: attempting dbt deps + dbt compile." | tee "${{ inputs.artifact-dir }}/dbt_compile.log"
+        dbt deps 2>&1 | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
+        deps_status=${PIPESTATUS[0]}
+        dbt compile 2>&1 | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
+        compile_status=${PIPESTATUS[0]}
+        if [ "$deps_status" -ne 0 ] || [ "$compile_status" -ne 0 ]; then
+          echo "SemZero: dbt compile did not produce a manifest. SemZero will continue if the CLI supports fallback; otherwise it will print a product error." | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
+        fi
+        exit 0
+
+    - name: Run SemZero Assumption Gate
+      shell: bash
+      run: |
+        set -euo pipefail
+        base_ref="${GITHUB_BASE_REF:-main}"
+        manifest_flag=""
+        if [ -f "${{ inputs.manifest-path }}" ]; then
+          manifest_flag="--manifest ${{ inputs.manifest-path }}"
+        fi
+        optional_flags=""
+        if [ -f "${{ inputs.policy-path }}" ]; then
+          optional_flags="$optional_flags --policy ${{ inputs.policy-path }}"
+        fi
+        semzero assumption-ci \
+          --repo . \
+          --base-ref "$base_ref" \
+          --artifact-dir "${{ inputs.artifact-dir }}" \
+          $manifest_flag \
+          $optional_flags
+
+    - name: Upload SemZero artifacts
+      if: ${{ always() && hashFiles(format('{0}/**', inputs.artifact-dir)) != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: semzero-assumption-gate-${{ github.event.pull_request.number || github.sha }}
+        path: ${{ inputs.artifact-dir }}
+
+    - name: Post sticky SemZero PR comment
+      if: ${{ always() && inputs.post-pr-comment == 'true' && github.event_name == 'pull_request' && hashFiles(format('{0}/comment.md', inputs.artifact-dir)) != '' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const artifactDir = '${{ inputs.artifact-dir }}';
+          const body = fs.readFileSync(`${artifactDir}/comment.md`, 'utf8');
+          const marker = '<!-- semzero-assumption-gate -->';
+          const artifactNote = '\n\n---\nSemZero ran in **shadow mode**. Evidence artifacts are attached to this workflow run.';
+          const finalBody = `${marker}\n${body}${artifactNote}`;
+
+          const {owner, repo} = context.repo;
+          const issue_number = context.issue.number;
+
+          const comments = await github.rest.issues.listComments({owner, repo, issue_number, per_page: 100});
+          const existing = comments.data.find(comment => comment.body && comment.body.includes(marker));
+
+          if (existing) {
+            await github.rest.issues.updateComment({owner, repo, comment_id: existing.id, body: finalBody});
+            core.info(`Updated SemZero PR comment ${existing.id} on PR #${issue_number}`);
+          } else {
+            const created = await github.rest.issues.createComment({owner, repo, issue_number, body: finalBody});
+            core.info(`Created SemZero PR comment ${created.data.id} on PR #${issue_number}`);
+          }
