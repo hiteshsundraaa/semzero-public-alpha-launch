@@ -67,3 +67,10 @@ During the first GitHub Action wrapper test, the action resolved correctly and i
 Error: No such option: --repo
 Error: No such option: --repo
 eof
+
+### Action wrapper test note — output directory option mismatch
+
+The second GitHub Action wrapper test reached `semzero assumption-ci` but failed:
+
+```text
+Error: No such option: --artifact-dir (Possible options: --output-dir, --project-dir)
