@@ -40,5 +40,5 @@ def test_assumption_diff_and_replay_fidelity_present(tmp_path):
     assert finding["replay_fidelity"]["replay_ran"] is False
     assert "No before/after output replay" in " ".join(finding["replay_fidelity"]["limitations"])
     text = comment.read_text()
-    assert "Assumption drift" in text
-    assert "Evidence fidelity" in text
+    assert "Technical detail" in text
+    assert "Confidence" in text

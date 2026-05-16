@@ -2169,15 +2169,16 @@ def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) ->
             "   - _Low-confidence/no-blast finding. Review as a possible assumption, not as a proven breakage._",
         ]
 
+    stable_id_text = ", ".join(f"`{sid}`" for sid in stable_ids[:6]) or "`unavailable`"
+
     lines += [
-        f"   - **Why now:** {_comment_why_now(finding)}",
-        f"   - **Assumption drift:** {drift}",
-        f"   - **Evidence fidelity:** `{fidelity_text}` · replay ran: `{bool(fidelity.get('replay_ran'))}`",
+        f"   - **Reviewer action:** {finding.recommended_check}",
+        f"   - **Why it matters:** {_finding_blast_summary(finding)}",
+        f"   - **What triggered this:** {_comment_why_now(finding)}",
+        f"   - **Confidence:** `{fidelity_text}`. Replay ran: `{bool(fidelity.get('replay_ran'))}`.",
+        f"   - **Reference:** **{stable_label}:** {stable_id_text}",
+        f"   - **Technical detail:** drift `{drift}` · business `{business}` · control coverage `{control}` · detector `{detector}`",
         f"   - **Validation replay:** `{validation_status}` · {validation_summary}",
-        f"   - **Blast radius:** {_finding_blast_summary(finding)}",
-        f"   - **Business:** `{business}` · **Control coverage:** `{control}` · **Detector:** `{detector}`",
-        f"   - **{stable_label}:** " + ", ".join(f"`{sid}`" for sid in stable_ids[:6]),
-        f"   - **Reviewer check:** {finding.recommended_check}",
         "",
     ]
     return lines
@@ -2319,11 +2320,15 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
         ]
 
     if needs_feedback:
-        sample = ", ".join(f"`{f.stable_id or f.finding_id}`" for f in needs_feedback[:3])
+        sample_id = needs_feedback[0].stable_id or needs_feedback[0].finding_id
         lines += [
             "### Calibrate this finding",
             "",
-            f"Reply with one of these commands to calibrate SemZero: `/semzero agree {sample}`, `/semzero false-positive {sample}`, or `/semzero accepted-risk {sample}`.",
+            "Reply with one of these commands to calibrate SemZero:",
+            "",
+            f"`/semzero agree {sample_id}`",
+            f"`/semzero false-positive {sample_id}`",
+            f"`/semzero accepted-risk {sample_id}`",
             "",
         ]
 

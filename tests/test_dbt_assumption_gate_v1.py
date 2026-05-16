@@ -100,7 +100,7 @@ def test_pr_comment_is_assumption_first(tmp_path: Path):
     assert "assumption may break" in comment
     assert "Review summary" in comment
     assert "Temporal Bucket" in comment
-    assert "Blast radius" in comment
+    assert "Why it matters" in comment
 
 
 def test_cli_writes_receipt_and_comment(tmp_path: Path):
