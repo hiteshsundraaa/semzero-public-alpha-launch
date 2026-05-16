@@ -100,7 +100,15 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        base_ref="${GITHUB_BASE_REF:-main}"
+        base_branch="${GITHUB_BASE_REF:-main}"
+        base_ref="origin/${base_branch}"
+
+        echo "SemZero: fetching base ref ${base_ref}"
+        git fetch origin "${base_branch}" --depth=1 || true
+
+        echo "SemZero: changed files against ${base_ref}"
+        git diff "${base_ref}...HEAD" --name-only | tee "${{ inputs.artifact-dir }}/changed_files.debug.txt" || true
+
         manifest_flag=""
         if [ -f "${{ inputs.manifest-path }}" ]; then
           manifest_flag="--dbt-manifest ${{ inputs.manifest-path }}"
