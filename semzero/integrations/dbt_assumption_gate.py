@@ -2214,12 +2214,24 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     cost_run = summary.get("estimated_extra_cost_per_run_usd")
     biz_summary = (summary.get("business_impact") or {}).get("summary")
 
+    if must_review_groups:
+        lead_target = "customer-facing data" if biz_summary and "customer" in str(biz_summary).lower() else "downstream dbt data"
+        lead_sentence = f"{len(must_review_groups)} assumption may break {lead_target}. Review before merging."
+    elif useful_advisory_groups:
+        lead_sentence = f"{len(useful_advisory_groups)} assumption needs attention before this change becomes enforced."
+    elif findings:
+        lead_sentence = f"{len(findings)} assumption signal found. Review before relying on this change."
+    else:
+        lead_sentence = "No reviewer-actionable assumption drift found in the changed dbt scope."
+
     lines = [
         "<!-- semzero-assumption-gate -->",
         "## SemZero Assumption Gate",
         "",
-        f"**Verdict:** `{receipt.verdict}` · **Mode:** `{receipt.mode}` · **Findings:** `{len(findings)}`",
-        f"**Changed dbt resources:** `{summary.get('changed_resource_count', 0)}` · **Blast-radius resources:** `{summary.get('blast_radius_resource_count', 0)}`",
+        f"**{lead_sentence}**",
+        "",
+        f"Verdict: `{receipt.verdict}` · Mode: `{receipt.mode}` · Finding(s): `{len(findings)}`",
+        f"Changed dbt resource(s): `{summary.get('changed_resource_count', 0)}` · Affected downstream resource(s): `{summary.get('blast_radius_resource_count', 0)}`",
     ]
     if cost_run is not None or cost_month is not None:
         if cost_month is not None:
@@ -2235,7 +2247,7 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     fidelity_summary = summary.get("replay_fidelity_summary") or {}
     if fidelity_summary.get("average_score") is not None:
         lines.append(
-            f"**Evidence fidelity:** average `{fidelity_summary.get('average_score')}` · replay ran for `{fidelity_summary.get('replay_ran_count', 0)}` finding(s)"
+            f"**Confidence:** Medium static confidence. Replay ran for `{fidelity_summary.get('replay_ran_count', 0)}` finding(s)."
         )
     validation_summary = summary.get("validation_replay_summary") or {}
     if validation_summary.get("replay_ran_count") is not None:
@@ -2258,7 +2270,7 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
         return "\n".join(lines)
 
     lines += [
-        "### Reviewer summary",
+        "### Review summary",
         "",
         f"- **Must review:** `{len(must_review_groups)}` reviewer item(s) from `{len(must_review)}` raw finding(s)",
         f"- **Useful advisory:** `{len(useful_advisory_groups)}` reviewer item(s) from `{len(useful_advisory)}` raw finding(s)",
@@ -2269,7 +2281,7 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
 
     visible_count = 0
     if must_review_groups:
-        lines += ["### Must review", ""]
+        lines += ["### Review before merge", ""]
         for idx, group in enumerate(must_review_groups[:max_findings], start=1):
             lines.extend(_render_comment_finding_group(group, idx))
             visible_count += len(group)
@@ -2309,14 +2321,14 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     if needs_feedback:
         sample = ", ".join(f"`{f.stable_id or f.finding_id}`" for f in needs_feedback[:3])
         lines += [
-            "### Needs feedback",
+            "### Calibrate this finding",
             "",
-            f"Please mark the reviewed finding(s) as `agree`, `fixed`, `accepted_risk`, or `false_positive` so the shadow dashboard can calibrate. Sample stable IDs: {sample}.",
+            f"Reply with one of these commands to calibrate SemZero: `/semzero agree {sample}`, `/semzero false-positive {sample}`, or `/semzero accepted-risk {sample}`.",
             "",
         ]
 
     lines.append(
-        "_Full evidence is preserved in the JSON receipt. This compact comment is grouped for reviewer action, not exhaustive evidence display._"
+        "_Full evidence is preserved in the JSON receipt artifact. This comment is ordered for reviewer action; raw detector evidence stays in the receipt._"
     )
     return "\n".join(lines)
 

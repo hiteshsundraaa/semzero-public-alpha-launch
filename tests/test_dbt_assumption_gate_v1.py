@@ -97,7 +97,8 @@ def test_pr_comment_is_assumption_first(tmp_path: Path):
     receipt = DbtAssumptionGate(manifest).run(["models/staging/stg_events.sql"], mode="shadow")
     comment = render_pr_comment(receipt)
     assert "SemZero Assumption Gate" in comment
-    assert "Reviewer summary" in comment
+    assert "assumption may break" in comment
+    assert "Review summary" in comment
     assert "Temporal Bucket" in comment
     assert "Blast radius" in comment
 
