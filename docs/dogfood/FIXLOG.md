@@ -133,3 +133,18 @@ Replaced the heredoc/Python fallback writer with a plain printf block that write
 
 Product lesson:
 Composite action fallback paths must avoid fragile shell heredocs. The fallback comment path is user-facing reliability infrastructure and should be boring.
+
+### Action wrapper test note — changed-file discovery missed model changes
+
+The GitHub Action wrapper posted a sticky PR comment, but the comment incorrectly said:
+
+```text
+No changed dbt SQL/YAML files matched the focused Assumption Gate scope.
+Root cause:
+The action passed --base-ref main from GITHUB_BASE_REF, but the GitHub checkout did not necessarily have a local main ref available. Changed-file discovery therefore produced an empty or incorrect diff.
+
+Fix:
+The action now fetches the base branch and passes origin/<base_branch> to SemZero. It also writes changed_files.debug.txt into the artifact directory for debugging.
+
+Product lesson:
+Changed-file discovery is part of the product contract. If the PR comment says no dbt files changed while the PR visibly changed a model, user trust collapses immediately.

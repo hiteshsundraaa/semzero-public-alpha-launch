@@ -1,6 +1,6 @@
 {
   "report_kind": "semzero_assumption_precision_eval_v1_22",
-  "generated_at": "2026-05-13T10:11:37.672913+00:00",
+  "generated_at": "2026-05-15T04:28:25.780309+00:00",
   "receipt_dir": "/Users/hiteshsundra/Downloads/semzero_public_alpha_launch/examples/dogfood_dbt_assumption_gate/receipts",
   "receipt_count": 6,
   "finding_count": 17,

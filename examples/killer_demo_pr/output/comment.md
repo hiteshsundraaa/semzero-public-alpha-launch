@@ -10,15 +10,15 @@
 
 ### Reviewer summary
 
-- **Must review:** `1`
-- **Useful advisory:** `0`
-- **Accepted risk / active exceptions:** `0`
+- **Must review:** `1` reviewer item(s) from `1` raw finding(s)
+- **Useful advisory:** `0` reviewer item(s) from `0` raw finding(s)
+- **Accepted risk / active exceptions:** `0` reviewer item(s) from `0` raw finding(s)
 - **Needs feedback:** `1`
 
 ### Must review
 
 1. **Temporal Bucket** — `critical` · confidence `high` · risk `100/100`
-   - **Why now:** a/models/staging/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New
+   - **Why now:** This PR touched a dbt resource connected to this assumption. Explicit before/after semantic diff was not available, so SemZero used changed-resource reachability plus static detector evidence. Evidence snippet: a/models/staging/stg_events.sql +++ b/models/staging/stg_events.sql @@ -1,6 +1,6 @@ select event_id, user_id, - event_ts, + convert_timezone('UTC', 'America/New_York', event_ts) as event_ts, amount_usd from raw.events…
    - **Assumption drift:** Daily/hourly bucket meaning may differ before vs after this PR.
    - **Evidence fidelity:** `0.82 (high_static_history_fidelity)` · replay ran: `True`
    - **Validation replay:** `drift_detected` · Using supplied local sample evidence, 2/4 sampled rows moved reporting bucket under the supplied timezone/date-boundary replay.

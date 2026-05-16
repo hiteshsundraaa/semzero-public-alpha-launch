@@ -1,6 +1,6 @@
 # SemZero Assumption Precision Evaluation
 
-Generated: `2026-05-13T10:11:37.674471+00:00`
+Generated: `2026-05-15T04:28:25.781888+00:00`
 
 - Receipts scanned: **6**
 - Findings evaluated: **17**

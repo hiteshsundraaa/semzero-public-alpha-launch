@@ -87,3 +87,18 @@ The final product surface should be:
 ```
 
 The CLI remains the engine under the action. Users should not need to understand the CLI before first value.
+
+## Required checkout configuration
+
+SemZero compares the pull request head against the base branch. The workflow must use full git history; otherwise changed-file discovery can silently return an empty diff.
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+    fetch-depth: 0
+```
+
+Do not rely on the default shallow checkout for SemZero PR analysis.
+
+If `changed_files.debug.txt` is empty on a pull request, do not trust a benign/no-scope verdict until checkout depth and base-ref discovery are fixed.
+
