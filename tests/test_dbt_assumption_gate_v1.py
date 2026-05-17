@@ -331,3 +331,125 @@ def test_discovery_mode_note_appears_in_review_comment(tmp_path):
     assert "SemZero setup note" in comment
     assert "discovery mode" in comment
     assert "inferred dbt lineage and static SQL evidence" in comment
+
+def test_repo_snapshot_indexes_models_and_inferred_contracts(tmp_path):
+    from semzero.repo_understanding.dbt_repo_snapshot import build_dbt_repo_snapshot
+
+    manifest = {
+        "metadata": {"dbt_version": "1.0.0"},
+        "nodes": {
+            "model.test.int_payment_summary": {
+                "unique_id": "model.test.int_payment_summary",
+                "resource_type": "model",
+                "name": "int_payment_summary",
+                "original_file_path": "models/intermediate/int_payment_summary.sql",
+                "depends_on": {"nodes": []},
+                "raw_code": "select customer_id, 'paid' as final_payment_status from source",
+                "compiled_code": "select customer_id, 'paid' as final_payment_status from source",
+                "columns": {
+                    "customer_id": {},
+                    "final_payment_status": {},
+                },
+                "config": {"materialized": "view"},
+                "meta": {},
+                "tags": [],
+            },
+            "model.test.mart_order_payments": {
+                "unique_id": "model.test.mart_order_payments",
+                "resource_type": "model",
+                "name": "mart_order_payments",
+                "original_file_path": "models/marts/mart_order_payments.sql",
+                "depends_on": {"nodes": ["model.test.int_payment_summary"]},
+                "raw_code": "select * from int_payment_summary",
+                "compiled_code": "select * from int_payment_summary",
+                "columns": {},
+                "config": {"materialized": "table"},
+                "meta": {},
+                "tags": [],
+            },
+            "test.test.not_null_int_payment_summary_customer_id": {
+                "unique_id": "test.test.not_null_int_payment_summary_customer_id",
+                "resource_type": "test",
+                "name": "not_null_int_payment_summary_customer_id",
+                "depends_on": {"nodes": ["model.test.int_payment_summary"]},
+                "column_name": "customer_id",
+                "test_metadata": {"name": "not_null", "kwargs": {"column_name": "customer_id"}},
+            },
+            "test.test.unique_int_payment_summary_customer_id": {
+                "unique_id": "test.test.unique_int_payment_summary_customer_id",
+                "resource_type": "test",
+                "name": "unique_int_payment_summary_customer_id",
+                "depends_on": {"nodes": ["model.test.int_payment_summary"]},
+                "column_name": "customer_id",
+                "test_metadata": {"name": "unique", "kwargs": {"column_name": "customer_id"}},
+            },
+            "test.test.accepted_values_payment_status": {
+                "unique_id": "test.test.accepted_values_payment_status",
+                "resource_type": "test",
+                "name": "accepted_values_payment_status",
+                "depends_on": {"nodes": ["model.test.int_payment_summary"]},
+                "column_name": "final_payment_status",
+                "test_metadata": {
+                    "name": "accepted_values",
+                    "kwargs": {
+                        "column_name": "final_payment_status",
+                        "values": ["paid", "pending"],
+                    },
+                },
+            },
+        },
+        "sources": {},
+        "exposures": {},
+        "metrics": {},
+        "child_map": {},
+        "parent_map": {},
+    }
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    snapshot = build_dbt_repo_snapshot(manifest_path, repo="test/repo", repo_root=tmp_path)
+
+    assert snapshot["snapshot_kind"] == "semzero_repo_snapshot_v1"
+    assert snapshot["summary"]["model_count"] == 2
+    assert snapshot["summary"]["test_count"] == 3
+    assert snapshot["summary"]["dependency_contract_count"] >= 3
+
+    model = snapshot["models"]["model.test.int_payment_summary"]
+    assert model["columns"]["customer_id"]["inferred_required"] is True
+    assert model["columns"]["customer_id"]["inferred_unique"] is True
+    assert model["columns"]["final_payment_status"]["accepted_values"] == ["paid", "pending"]
+    assert "customer_id" in model["primary_key_candidates"]
+    assert "customer_id" in model["grain_candidates"]
+    assert model["downstream_count"] >= 1
+
+    mart = snapshot["models"]["model.test.mart_order_payments"]
+    assert mart["sensitivity"]["label"] == "REVENUE_CRITICAL"
+
+
+def test_repo_index_cli_writes_snapshot(tmp_path):
+    from click.testing import CliRunner
+    from semzero.cli import cli
+
+    manifest_path = _write_minimal_manifest(tmp_path)
+    output = tmp_path / "snapshot.json"
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "repo-index",
+            "--dbt-manifest",
+            str(manifest_path),
+            "--output",
+            str(output),
+            "--repo",
+            "test/repo",
+            "--project-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["snapshot_kind"] == "semzero_repo_snapshot_v1"
+    assert payload["summary"]["indexed_resource_count"] >= 1

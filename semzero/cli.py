@@ -763,6 +763,7 @@ def assumption_gate(
         load_replay_fixtures,
         render_pr_comment,
     )
+    from semzero.repo_understanding.dbt_repo_snapshot import write_dbt_repo_snapshot
 
     expanded: list[str] = []
     expanded.extend([item for item in changed_files if str(item).strip()])
@@ -774,13 +775,14 @@ def assumption_gate(
     if not expanded:
         raise click.ClickException("Provide at least one --changed-file or --changed-files entry.")
 
+    criticality_payload = load_business_criticality(criticality_registry or None)
     gate = DbtAssumptionGate(
         dbt_manifest,
         table_sizes=load_table_sizes(table_sizes or None),
         cost_profiles=load_cost_profiles(cost_profiles or None),
         warehouse_history=load_warehouse_history(warehouse_history or None),
         replay_fixtures=load_replay_fixtures(replay_fixtures or None),
-        criticality_registry=load_business_criticality(criticality_registry or None),
+        criticality_registry=criticality_payload,
         exceptions=load_assumption_exceptions(exceptions_file or None),
         catalog_path=dbt_catalog or None,
         run_results_path=dbt_run_results or None,
@@ -812,6 +814,63 @@ def assumption_gate(
         click.echo(f"  Rough cost exposure: ${cost}/run{suffix}")
     click.echo(f"  Receipt → {output}")
     click.echo(f"  PR comment → {comment_out}\n")
+
+
+
+@cli.command("repo-index")
+@click.option(
+    "--dbt-manifest",
+    default="target/manifest.json",
+    show_default=True,
+    help="Path to dbt target/manifest.json.",
+)
+@click.option(
+    "--output",
+    default="data/semzero_repo_snapshot.json",
+    show_default=True,
+    help="Where to write the repo snapshot JSON.",
+)
+@click.option(
+    "--repo",
+    default="",
+    help="Repository identifier. Defaults to GITHUB_REPOSITORY or unknown.",
+)
+@click.option(
+    "--project-dir",
+    default=".",
+    show_default=True,
+    help="Repository root for git metadata.",
+)
+@click.option(
+    "--criticality-registry",
+    default="",
+    help="Optional JSON/YAML registry mapping dbt nodes to sensitivity labels.",
+)
+def repo_index_cmd(dbt_manifest, output, repo, project_dir, criticality_registry):
+    """Build a SemZero repo-understanding snapshot from a dbt manifest."""
+    from semzero.integrations.dbt_assumption_gate import load_business_criticality
+    from semzero.repo_understanding.dbt_repo_snapshot import write_dbt_repo_snapshot
+
+    manifest = Path(dbt_manifest)
+    if not manifest.exists():
+        raise click.ClickException(f"dbt manifest not found: {dbt_manifest}")
+
+    snapshot = write_dbt_repo_snapshot(
+        manifest,
+        output,
+        repo=repo or os.environ.get("GITHUB_REPOSITORY", "unknown"),
+        repo_root=project_dir,
+        criticality_registry=load_business_criticality(criticality_registry or None),
+    )
+
+    summary = snapshot.get("summary", {})
+    click.echo("\n  SemZero Repo Snapshot")
+    click.echo(f"  Resources indexed: {summary.get('indexed_resource_count', 0)}")
+    click.echo(f"  Models: {summary.get('model_count', 0)}")
+    click.echo(f"  Tests: {summary.get('test_count', 0)}")
+    click.echo(f"  Inferred contracts: {summary.get('dependency_contract_count', 0)}")
+    click.echo(f"  Snapshot → {output}\n")
+
 
 
 @cli.command("assumption-ci")
@@ -1159,6 +1218,31 @@ def assumption_ci(
         )
     else:
         diff_text = _run_git(["git", "diff", f"{effective_base}...HEAD", "--", *dbt_like])
+
+    criticality_payload = load_business_criticality(criticality_registry or None)
+
+    try:
+        snapshot = write_dbt_repo_snapshot(
+            manifest_path,
+            out / "repo_snapshot.json",
+            repo=os.environ.get("GITHUB_REPOSITORY", "unknown"),
+            repo_root=project_dir or ".",
+            criticality_registry=criticality_payload,
+        )
+        click.echo(
+            f"  Repo snapshot: {snapshot.get('summary', {}).get('indexed_resource_count', 0)} resource(s), "
+            f"{snapshot.get('summary', {}).get('dependency_contract_count', 0)} inferred contract(s)"
+        )
+    except Exception as exc:
+        snapshot_error = {
+            "status": "SNAPSHOT_ERROR",
+            "message": str(exc),
+        }
+        (out / "repo_snapshot.error.json").write_text(
+            json.dumps(snapshot_error, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        click.echo(f"  Repo snapshot: failed ({exc})")
 
     effective_exceptions = exceptions_file or str(out / "assumption_exceptions.jsonl")
     gate = DbtAssumptionGate(
