@@ -2133,6 +2133,275 @@ def _comment_why_now(finding: AssumptionFindingV1) -> str:
     )
 
 
+
+def _comment_business_weight(finding: AssumptionFindingV1) -> float:
+    business = str(_finding_business_severity(finding) or "").upper()
+    mapping = {
+        "REVENUE_CRITICAL": 1.00,
+        "FINANCE_CRITICAL": 1.00,
+        "CUSTOMER_FACING": 0.80,
+        "CUSTOMER_CRITICAL": 0.80,
+        "OPERATIONAL": 0.60,
+        "INTERNAL_ONLY": 0.40,
+        "UNKNOWN_CONFIRMED": 0.35,
+        "UNKNOWN": 0.30,
+        "NONE": 0.30,
+        "": 0.30,
+    }
+    return mapping.get(business, 0.60)
+
+
+def _comment_downstream_count(finding: AssumptionFindingV1) -> int:
+    summary = _finding_blast_summary(finding)
+    if not summary or summary == "No downstream resources found":
+        return 0
+    if "+1 more" in summary:
+        # Approximate safely from rendered summary: three visible plus one or more.
+        return max(4, summary.count(",") + 1)
+    if "+" in summary and "more" in summary:
+        return max(4, summary.count(",") + 1)
+    return max(1, summary.count(",") + 1)
+
+
+def _comment_blast_weight(finding: AssumptionFindingV1, max_expected_downstream: int = 50) -> float:
+    import math
+
+    downstream_count = _comment_downstream_count(finding)
+    if downstream_count <= 0:
+        # Do not collapse local model risk to zero when lineage is weak/incomplete.
+        return 0.10
+
+    return min(
+        1.0,
+        math.log10(downstream_count + 1) / math.log10(max_expected_downstream + 1),
+    )
+
+
+def _comment_fidelity_tier_weight(finding: AssumptionFindingV1) -> tuple[str, float]:
+    """Return human tier label and scoring weight.
+
+    Tier 3: replay/fixture validation available.
+    Tier 2: explicit before/after semantic diff or supplied manifest-level evidence.
+    Tier 1: manifest generated/lineage available in CI with static evidence.
+    Tier 0: static fallback only.
+    """
+    validation = finding.validation_replay or {}
+    replay = finding.replay_fidelity or {}
+    assumption_diff = finding.assumption_diff or {}
+
+    validation_status = str(validation.get("status") or "").lower()
+    replay_ran = bool(replay.get("replay_ran"))
+
+    if validation_status in {"passed", "validated", "drift_detected"} or replay_ran:
+        return "Tier 3", 1.00
+
+    explicit_diff = bool(
+        assumption_diff.get("explicit_before_after")
+        or assumption_diff.get("before_after_available")
+        or assumption_diff.get("diff_summary")
+        or assumption_diff.get("drift_summary")
+    )
+    if explicit_diff:
+        return "Tier 2", 0.80
+
+    fidelity_level = str(replay.get("level") or "").lower()
+    score = replay.get("score")
+    if score is not None or "static" in fidelity_level:
+        return "Tier 1", 0.65
+
+    return "Tier 0", 0.40
+
+
+def _comment_detection_confidence_weight(finding: AssumptionFindingV1) -> float:
+    confidence = str(getattr(finding, "confidence", "") or "").lower()
+    if confidence == "high":
+        return 1.00
+    if confidence == "medium":
+        return 0.65
+    if confidence == "low":
+        return 0.35
+    return 0.50
+
+
+def _comment_replay_weight(finding: AssumptionFindingV1) -> tuple[str, float]:
+    validation = finding.validation_replay or {}
+    replay = finding.replay_fidelity or {}
+    status = str(validation.get("status") or "").lower()
+
+    if status in {"passed", "validated", "drift_detected"} or bool(replay.get("replay_ran")):
+        return "validated", 1.00
+    if status in {"failed", "failed_to_confirm"}:
+        return "failed_to_confirm", 0.60
+    if status in {"error", "unavailable"}:
+        return "attempted_unavailable", 0.75
+    return "not_run", 0.85
+
+
+def _comment_review_priority_breakdown(finding: AssumptionFindingV1) -> dict[str, object]:
+    raw_detector_risk = int(getattr(finding, "risk_score", 0) or 0)
+
+    blast_weight = _comment_blast_weight(finding)
+    business_weight = _comment_business_weight(finding)
+    impact_score = blast_weight * business_weight
+
+    fidelity_tier, fidelity_weight = _comment_fidelity_tier_weight(finding)
+    detection_weight = _comment_detection_confidence_weight(finding)
+    replay_status, replay_weight = _comment_replay_weight(finding)
+    evidence_score = fidelity_weight * detection_weight * replay_weight
+
+    raw_score = round(100 * impact_score * evidence_score)
+
+    caps = []
+    floors = []
+    score = raw_score
+
+    downstream_count = _comment_downstream_count(finding)
+    confidence = str(getattr(finding, "confidence", "") or "").lower()
+    business = str(_finding_business_severity(finding) or "").upper()
+
+    # Hard ceilings: evidence must earn high scores.
+    if fidelity_tier in {"Tier 0", "Tier 1"} and score > 80:
+        score = 80
+        caps.append("tier_below_2_cap_80")
+
+    if downstream_count == 0 and score > 60:
+        score = 60
+        caps.append("no_confirmed_blast_cap_60")
+
+    if confidence == "low" and score > 50:
+        score = 50
+        caps.append("low_confidence_cap_50")
+
+    if confidence == "low" and downstream_count == 0 and score > 35:
+        score = 35
+        caps.append("low_confidence_no_blast_cap_35")
+
+    # Product floors: do not make important confirmed reviewer work look trivial.
+    if (
+        business in {"REVENUE_CRITICAL", "FINANCE_CRITICAL"}
+        and confidence == "high"
+        and downstream_count > 0
+        and score < 45
+    ):
+        score = 45
+        floors.append("revenue_high_confidence_blast_floor_45")
+    elif (
+        business in {"CUSTOMER_FACING", "CUSTOMER_CRITICAL"}
+        and confidence == "high"
+        and downstream_count > 0
+        and score < 35
+    ):
+        score = 35
+        floors.append("customer_high_confidence_blast_floor_35")
+    elif (
+        business in {"REVENUE_CRITICAL", "FINANCE_CRITICAL"}
+        and confidence == "high"
+        and score < 35
+    ):
+        score = 35
+        floors.append("revenue_high_confidence_floor_35")
+
+    score = max(0, min(100, int(score)))
+
+    if score >= 80:
+        band = "block candidate"
+    elif score >= 65:
+        band = "review strongly recommended"
+    elif score >= 45:
+        band = "review recommended"
+    elif score >= 25:
+        band = "advisory"
+    else:
+        band = "informational"
+
+    return {
+        "score": score,
+        "band": band,
+        "raw_formula_score": raw_score,
+        "raw_detector_risk": raw_detector_risk,
+        "impact_score": round(impact_score, 3),
+        "evidence_score": round(evidence_score, 3),
+        "blast_weight": round(blast_weight, 3),
+        "business_weight": round(business_weight, 3),
+        "fidelity_tier": fidelity_tier,
+        "fidelity_weight": fidelity_weight,
+        "detection_weight": detection_weight,
+        "replay_status": replay_status,
+        "replay_weight": replay_weight,
+        "caps": caps,
+        "floors": floors,
+    }
+
+
+def _comment_review_priority_score(finding: AssumptionFindingV1) -> int:
+    return int(_comment_review_priority_breakdown(finding)["score"])
+
+
+
+
+def _comment_business_priority(finding: AssumptionFindingV1) -> int:
+    return round(_comment_business_weight(finding) * 100)
+
+
+def _comment_confidence_priority(finding: AssumptionFindingV1) -> int:
+    return round(_comment_detection_confidence_weight(finding) * 100)
+
+
+def _comment_blast_priority(finding: AssumptionFindingV1) -> int:
+    return round(_comment_blast_weight(finding) * 100)
+
+
+def _comment_severity_priority(finding: AssumptionFindingV1) -> int:
+    severity = str(_comment_display_severity(finding) or "").lower()
+    if severity.startswith("potential"):
+        return 0
+    if "critical" in severity:
+        return 100
+    if "high" in severity:
+        return 80
+    if "medium" in severity:
+        return 50
+    if "low" in severity:
+        return 20
+    return 0
+
+
+def _comment_reviewer_priority(finding: AssumptionFindingV1) -> tuple[int, int, int, int, int, str]:
+    """Sort key for PR comment display.
+
+    Evidence-adjusted review priority comes first. Business, confidence,
+    blast radius, and severity remain as deterministic tie-breakers.
+    """
+    return (
+        _comment_review_priority_score(finding),
+        _comment_business_priority(finding),
+        _comment_confidence_priority(finding),
+        _comment_blast_priority(finding),
+        _comment_severity_priority(finding),
+        str(getattr(finding, "stable_id", "") or getattr(finding, "finding_id", "")),
+    )
+
+
+def _should_demote_to_advisory(finding: AssumptionFindingV1) -> bool:
+    """Demote weak/no-blast findings out of must-review.
+
+    This is a reviewer-surface decision, not a detector decision. The finding
+    still remains in the receipt and can still appear as useful advisory.
+    """
+    confidence = str(getattr(finding, "confidence", "") or "").lower()
+    blast = _finding_blast_summary(finding)
+    no_blast = not blast or blast == "No downstream resources found"
+    severity = str(_comment_display_severity(finding) or "").lower()
+    priority = _comment_review_priority_score(finding)
+
+    return (
+        confidence == "low"
+        and no_blast
+        and severity.startswith("potential")
+        and priority < 45
+    )
+
+
 def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) -> list[str]:
     finding = group[0]
     detector = (finding.pattern_detail or {}).get("pattern_type", finding.family)
@@ -2160,8 +2429,9 @@ def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) ->
     grouped_suffix = f" · {len(group)} related findings grouped" if len(group) > 1 else ""
 
     severity = _comment_display_severity(finding)
+    priority = _comment_review_priority_breakdown(finding)
     lines = [
-        f"{idx}. **{finding.family.replace('_', ' ').title()}** — `{severity}` · confidence `{finding.confidence}` · risk `{finding.risk_score}/100`{cost_text}{grouped_suffix}",
+        f"{idx}. **{finding.family.replace('_', ' ').title()}** — {priority['band']} · priority `{priority['score']}/100` · confidence `{finding.confidence}`{cost_text}{grouped_suffix}",
     ]
 
     if severity.startswith("potential"):
@@ -2175,8 +2445,9 @@ def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) ->
         f"   - **Reviewer action:** {finding.recommended_check}",
         f"   - **Why it matters:** {_finding_blast_summary(finding)}",
         f"   - **What triggered this:** {_comment_why_now(finding)}",
-        f"   - **Confidence:** `{fidelity_text}`. Replay ran: `{bool(fidelity.get('replay_ran'))}`.",
+        f"   - **Confidence:** `{fidelity_text}`. Evidence tier: `{priority['fidelity_tier']}`. Replay: `{priority['replay_status']}`.",
         f"   - **Reference:** **{stable_label}:** {stable_id_text}",
+        f"   - **Score detail:** impact `{priority['impact_score']}` × evidence `{priority['evidence_score']}` → raw `{priority['raw_formula_score']}/100`; raw detector risk `{priority['raw_detector_risk']}/100`.",
         f"   - **Technical detail:** drift `{drift}` · business `{business}` · control coverage `{control}` · detector `{detector}`",
         f"   - **Validation replay:** `{validation_status}` · {validation_summary}",
         "",
@@ -2201,10 +2472,25 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
             f.family,
         ),
     )
-    must_review = [f for f in findings if _is_must_review_finding(f)]
     accepted_risk = [f for f in findings if _finding_exception_state(f) == "active_exception"]
-    useful_advisory = [f for f in findings if f not in must_review and f not in accepted_risk]
+    must_review = [
+        f
+        for f in findings
+        if f not in accepted_risk
+        and _is_must_review_finding(f)
+        and not _should_demote_to_advisory(f)
+    ]
+    useful_advisory = [
+        f
+        for f in findings
+        if f not in must_review and f not in accepted_risk
+    ]
     needs_feedback = [f for f in findings if _finding_exception_state(f) != "active_exception"]
+
+    must_review = sorted(must_review, key=_comment_reviewer_priority, reverse=True)
+    useful_advisory = sorted(useful_advisory, key=_comment_reviewer_priority, reverse=True)
+    accepted_risk = sorted(accepted_risk, key=_comment_reviewer_priority, reverse=True)
+    needs_feedback = sorted(needs_feedback, key=_comment_reviewer_priority, reverse=True)
 
     must_review_groups = _group_comment_findings(must_review)
     useful_advisory_groups = _group_comment_findings(useful_advisory)
@@ -2320,17 +2606,27 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
         ]
 
     if needs_feedback:
-        sample_id = needs_feedback[0].stable_id or needs_feedback[0].finding_id
+        calibration_targets = []
+        seen_ids = set()
+        for finding in needs_feedback[:3]:
+            fid = finding.stable_id or finding.finding_id
+            if fid and fid not in seen_ids:
+                seen_ids.add(fid)
+                calibration_targets.append(fid)
+
         lines += [
-            "### Calibrate this finding",
+            "### Calibrate these findings",
             "",
-            "Reply with one of these commands to calibrate SemZero:",
-            "",
-            f"`/semzero agree {sample_id}`",
-            f"`/semzero false-positive {sample_id}`",
-            f"`/semzero accepted-risk {sample_id}`",
+            "Reply with one command per finding:",
             "",
         ]
+        for fid in calibration_targets:
+            lines += [
+                f"`/semzero agree {fid}`",
+                f"`/semzero false-positive {fid}`",
+                f"`/semzero accepted-risk {fid}`",
+                "",
+            ]
 
     lines.append(
         "_Full evidence is preserved in the JSON receipt artifact. This comment is ordered for reviewer action; raw detector evidence stays in the receipt._"
