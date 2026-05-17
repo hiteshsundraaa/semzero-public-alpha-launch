@@ -944,10 +944,6 @@ def assumption_ci(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     manifest_path = Path(dbt_manifest)
-    if not manifest_path.exists():
-        raise click.ClickException(
-            f"dbt manifest not found: {dbt_manifest}. Run `dbt compile` first or pass --dbt-manifest."
-        )
 
     def _split(blob: str) -> list[str]:
         found: list[str] = []
@@ -963,20 +959,28 @@ def assumption_ci(
         except Exception:
             return ""
 
-    def _write_analysis_incomplete_artifacts(reason: str, message: str, required_fix: list[str]) -> None:
+    def _write_ci_status_artifacts(
+        status: str,
+        reason: str,
+        message: str,
+        required_fix: list[str],
+    ) -> None:
+        if status not in {"ANALYSIS_INCOMPLETE", "CONFIG_ERROR"}:
+            raise click.ClickException(f"Internal SemZero status writer received invalid status: {status}")
+
         payload = {
-            "receipt_kind": "dbt_assumption_gate_ci_analysis_incomplete_v1",
+            "receipt_kind": f"dbt_assumption_gate_ci_{status.lower()}_v1",
             "schema_version": "semzero.evidence.v1",
             "adapter": "dbt_assumption_gate",
             "domain": "data",
             "mode": mode,
-            "verdict": "ANALYSIS_INCOMPLETE",
+            "verdict": status,
             "summary": {
                 "finding_count": 0,
                 "changed_resource_count": 0,
                 "blast_radius_resource_count": 0,
                 "analysis_status": {
-                    "status": "ANALYSIS_INCOMPLETE",
+                    "status": status,
                     "reason": reason,
                     "message": message,
                     "required_fix": required_fix,
@@ -989,21 +993,36 @@ def assumption_ci(
             "changed_files": files,
             "findings": [],
         }
+
         _save_json(payload, str(out / "receipt.json"))
+
+        if status == "CONFIG_ERROR":
+            title = "SemZero configuration prevented a safe review."
+            meaning = (
+                "SemZero did **not** complete a trustworthy dbt assumption review because required project/configuration "
+                "inputs were missing or invalid."
+            )
+        else:
+            title = "SemZero could not prove this PR is safe."
+            meaning = (
+                "SemZero did **not** find proof that this change is safe. It did not have enough reliable changed-file "
+                "context to make a normal merge recommendation."
+            )
+
         lines = [
             "<!-- semzero-assumption-gate -->",
             "## SemZero Assumption Gate",
             "",
-            "**SemZero could not prove this PR is safe.**",
+            f"**{title}**",
             "",
-            f"Verdict: `ANALYSIS_INCOMPLETE` · Mode: `{mode}`",
+            f"Verdict: `{status}` · Mode: `{mode}`",
             f"Reason: `{reason}`",
             "",
             message,
             "",
             "### What this means",
             "",
-            "SemZero did **not** find proof that this change is safe. It did not have enough reliable changed-file context to make a normal merge recommendation.",
+            meaning,
             "",
             "### Required fix",
             "",
@@ -1012,16 +1031,36 @@ def assumption_ci(
             lines.append(f"- {item}")
         lines.append("")
         lines.append("_Full diagnostic context is preserved in the JSON receipt artifact._")
+
         (out / "comment.md").write_text("\n".join(lines), encoding="utf-8")
         (out / "changed_files.txt").write_text("\n".join(files), encoding="utf-8")
         (out / "changed_files.status.json").write_text(
             json.dumps(payload["summary"]["analysis_status"], indent=2, sort_keys=True),
             encoding="utf-8",
         )
+
         click.echo("\n  SemZero Assumption CI")
-        click.echo("  Verdict: ANALYSIS_INCOMPLETE")
+        click.echo(f"  Verdict: {status}")
         click.echo(f"  Reason: {reason}")
         click.echo(f"  Artifacts → {out}\n")
+
+
+    def _write_analysis_incomplete_artifacts(reason: str, message: str, required_fix: list[str]) -> None:
+        _write_ci_status_artifacts(
+            status="ANALYSIS_INCOMPLETE",
+            reason=reason,
+            message=message,
+            required_fix=required_fix,
+        )
+
+
+    def _write_config_error_artifacts(reason: str, message: str, required_fix: list[str]) -> None:
+        _write_ci_status_artifacts(
+            status="CONFIG_ERROR",
+            reason=reason,
+            message=message,
+            required_fix=required_fix,
+        )
 
 
     files = _split(changed_files)
@@ -1030,6 +1069,22 @@ def assumption_ci(
         if os.environ.get("GITHUB_BASE_REF")
         else "origin/main"
     )
+
+    if not manifest_path.exists():
+        _write_config_error_artifacts(
+            reason="dbt_manifest_missing",
+            message=(
+                f"dbt manifest was not found at `{dbt_manifest}`. SemZero cannot map changed files to dbt resources "
+                "without a manifest."
+            ),
+            required_fix=[
+                "Run `dbt compile` before SemZero, or pass --dbt-manifest pointing to a valid manifest.json.",
+                "If using the GitHub Action, keep run-dbt-compile enabled or provide an existing target/manifest.json.",
+                "Check dbt_compile.log in the SemZero artifact for the compile failure root cause.",
+            ],
+        )
+        return
+
     if not files:
         name_blob = _run_git(["git", "diff", "--name-only", f"{effective_base}...HEAD"])
         files = _split(name_blob)

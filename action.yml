@@ -84,15 +84,54 @@ runs:
         fi
         if [ ! -f dbt_project.yml ]; then
           echo "SemZero: no dbt_project.yml found; skipping dbt compile." | tee "${{ inputs.artifact-dir }}/dbt_compile.log"
+          {
+            printf '{\n'
+            printf '  "status": "CONFIG_ERROR",\n'
+            printf '  "reason": "dbt_project_missing",\n'
+            printf '  "message": "dbt_project.yml was not found, so dbt compile could not run."\n'
+            printf '}\n'
+          } > "${{ inputs.artifact-dir }}/dbt_compile.status.json"
           exit 0
         fi
+
         echo "SemZero: attempting dbt deps + dbt compile." | tee "${{ inputs.artifact-dir }}/dbt_compile.log"
+
+        if ! command -v dbt >/dev/null 2>&1; then
+          echo "SemZero: dbt command is not available." | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
+          {
+            printf '{\n'
+            printf '  "status": "CONFIG_ERROR",\n'
+            printf '  "reason": "dbt_command_unavailable",\n'
+            printf '  "message": "dbt command was not available after package installation."\n'
+            printf '}\n'
+          } > "${{ inputs.artifact-dir }}/dbt_compile.status.json"
+          exit 0
+        fi
+
         dbt deps 2>&1 | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
         deps_status=${PIPESTATUS[0]}
         dbt compile 2>&1 | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
         compile_status=${PIPESTATUS[0]}
+
         if [ "$deps_status" -ne 0 ] || [ "$compile_status" -ne 0 ]; then
-          echo "SemZero: dbt compile did not produce a manifest. SemZero will continue if the CLI supports fallback; otherwise it will print a product error." | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
+          echo "SemZero: dbt compile failed. SemZero will emit CONFIG_ERROR if no manifest is available." | tee -a "${{ inputs.artifact-dir }}/dbt_compile.log"
+          {
+            printf '{\n'
+            printf '  "status": "CONFIG_ERROR",\n'
+            printf '  "reason": "dbt_compile_failed",\n'
+            printf '  "deps_exit_code": %s,\n' "$deps_status"
+            printf '  "compile_exit_code": %s,\n' "$compile_status"
+            printf '  "message": "dbt deps or dbt compile failed before SemZero analysis."\n'
+            printf '}\n'
+          } > "${{ inputs.artifact-dir }}/dbt_compile.status.json"
+        else
+          {
+            printf '{\n'
+            printf '  "status": "COMPLETE",\n'
+            printf '  "reason": "dbt_compile_completed",\n'
+            printf '  "message": "dbt compile completed before SemZero analysis."\n'
+            printf '}\n'
+          } > "${{ inputs.artifact-dir }}/dbt_compile.status.json"
         fi
         exit 0
 

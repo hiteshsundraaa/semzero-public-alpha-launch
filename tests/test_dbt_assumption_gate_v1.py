@@ -273,3 +273,40 @@ def test_analysis_incomplete_when_dbt_file_not_mapped_to_manifest(tmp_path):
     assert "ANALYSIS_INCOMPLETE" in comment
     assert "models/not_in_manifest.sql" in comment
 
+
+def test_assumption_ci_manifest_missing_writes_config_error(tmp_path, monkeypatch):
+    from click.testing import CliRunner
+    from semzero.cli import cli
+
+    out = tmp_path / "out"
+    missing_manifest = tmp_path / "missing_manifest.json"
+
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "assumption-ci",
+            "--dbt-manifest",
+            str(missing_manifest),
+            "--changed-files",
+            "models/orders.sql",
+            "--base-ref",
+            "origin/main",
+            "--output-dir",
+            str(out),
+            "--no-write-github-summary",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+    receipt = json.loads((out / "receipt.json").read_text(encoding="utf-8"))
+    assert receipt["verdict"] == "CONFIG_ERROR"
+    assert receipt["summary"]["analysis_status"]["reason"] == "dbt_manifest_missing"
+
+    comment = (out / "comment.md").read_text(encoding="utf-8")
+    assert "CONFIG_ERROR" in comment
+    assert "configuration prevented a safe review" in comment
+    assert "dbt manifest was not found" in comment
