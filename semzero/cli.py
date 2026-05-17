@@ -1222,6 +1222,8 @@ def assumption_ci(
     criticality_payload = load_business_criticality(criticality_registry or None)
 
     try:
+        from semzero.repo_understanding.dbt_repo_snapshot import write_dbt_repo_snapshot
+
         snapshot = write_dbt_repo_snapshot(
             manifest_path,
             out / "repo_snapshot.json",
