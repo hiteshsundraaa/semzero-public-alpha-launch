@@ -2639,10 +2639,9 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     lines += [
         "### Review summary",
         "",
-        f"- **Must review:** `{len(must_review_groups)}` reviewer item(s) from `{len(must_review)}` raw finding(s)",
-        f"- **Useful advisory:** `{len(useful_advisory_groups)}` reviewer item(s) from `{len(useful_advisory)}` raw finding(s)",
-        f"- **Accepted risk / active exceptions:** `{len(accepted_risk_groups)}` reviewer item(s) from `{len(accepted_risk)}` raw finding(s)",
-        f"- **Needs feedback:** `{len(needs_feedback)}`",
+        f"- **Must review:** `{len(must_review_groups)}`",
+        f"- **Useful advisory:** `{len(useful_advisory_groups)}`",
+        f"- **Accepted risk / active exceptions:** `{len(accepted_risk_groups)}`",
         "",
     ]
 
