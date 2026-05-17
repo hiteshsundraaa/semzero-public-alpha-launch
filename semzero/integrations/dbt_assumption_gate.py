@@ -2429,29 +2429,46 @@ def _comment_trigger_summary(finding: AssumptionFindingV1) -> str:
 
     if "enum" in family or "domain" in family or "enum" in detector:
         return (
-            f"{resource_text} — status/domain mapping changed in conditional logic. "
-            "Check whether downstream mappings, filters, accepted values, or dashboards still match the new default."
+            f"{resource_text} — payment/status fallback mapping changed. "
+            "A conditional branch now maps non-primary values through a different default path. "
+            "Check whether downstream mappings, filters, accepted values, or dashboards still match the new status semantics."
         )
 
     if "null" in family or "fallback" in family or "default" in family:
         return (
             f"{resource_text} — fallback/default handling changed. "
-            "Check whether null or default values still carry the same business meaning."
+            "A branch that previously assigned a safe/default value may now carry a different business meaning. "
+            "Check whether downstream null/default assumptions still hold."
         )
 
     if "join" in family or "cardinality" in family or "fanout" in family or "join" in detector:
         return (
-            f"{resource_text} — join or aggregation grain is connected to the changed model. "
-            "Check whether key uniqueness and deduplication assumptions still hold."
+            f"{resource_text} — aggregation or join-grain assumption was touched. "
+            "SemZero did not confirm downstream blast radius for this finding, so treat it as awareness unless stronger evidence appears."
         )
 
     if "temporal" in family or "date" in family or "time" in family:
         return (
             f"{resource_text} — date/time bucketing or filtering changed. "
-            "Check whether downstream reporting windows still mean the same thing."
+            "Check whether downstream reporting windows, freshness assumptions, or SLA windows still mean the same thing."
         )
 
     return f"{resource_text} — SemZero found assumption-relevant structural evidence connected to this PR change."
+
+
+
+def _comment_why_it_matters(finding: AssumptionFindingV1) -> str:
+    blast = _finding_blast_summary(finding)
+    if blast and blast != "No downstream resources found":
+        return blast
+
+    confidence = str(getattr(finding, "confidence", "") or "").lower()
+    severity = str(_comment_display_severity(finding) or "").lower()
+
+    if confidence == "low" or severity.startswith("potential"):
+        return "No downstream resources confirmed. Pattern flagged for awareness only."
+
+    return "No downstream resources confirmed from available lineage. Review local model semantics if this asset is business-critical."
 
 
 def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) -> list[str]:
@@ -2495,11 +2512,11 @@ def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) ->
 
     lines += [
         f"   - **Reviewer action:** {finding.recommended_check}",
-        f"   - **Why it matters:** {_finding_blast_summary(finding)}",
+        f"   - **Why it matters:** {_comment_why_it_matters(finding)}",
         f"   - **What triggered this:** {_comment_trigger_summary(finding)}",
         f"   - **Confidence:** `{fidelity_text}`. Evidence tier: `{priority['fidelity_tier']}`. Replay: `{priority['replay_status']}`.",
         f"   - **Reference:** **{stable_label}:** {stable_id_text}",
-        f"   - **Score detail:** impact `{priority['impact_score']}` × evidence `{priority['evidence_score']}` → displayed priority `{priority['score']}/100`.",
+        f"   - **Score detail:** evidence-adjusted review priority `{priority['score']}/100`. Full scoring breakdown is preserved in the JSON receipt.",
         f"   - **Technical detail:** drift `{drift}` · business `{business}` · control coverage `{control}` · detector `{detector}`",
         f"   - **Validation replay:** `{validation_status}` · {validation_summary}",
         "",
