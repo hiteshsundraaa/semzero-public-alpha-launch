@@ -963,6 +963,67 @@ def assumption_ci(
         except Exception:
             return ""
 
+    def _write_analysis_incomplete_artifacts(reason: str, message: str, required_fix: list[str]) -> None:
+        payload = {
+            "receipt_kind": "dbt_assumption_gate_ci_analysis_incomplete_v1",
+            "schema_version": "semzero.evidence.v1",
+            "adapter": "dbt_assumption_gate",
+            "domain": "data",
+            "mode": mode,
+            "verdict": "ANALYSIS_INCOMPLETE",
+            "summary": {
+                "finding_count": 0,
+                "changed_resource_count": 0,
+                "blast_radius_resource_count": 0,
+                "analysis_status": {
+                    "status": "ANALYSIS_INCOMPLETE",
+                    "reason": reason,
+                    "message": message,
+                    "required_fix": required_fix,
+                    "effective_base": effective_base,
+                    "github_event_name": os.environ.get("GITHUB_EVENT_NAME", ""),
+                    "github_base_ref": os.environ.get("GITHUB_BASE_REF", ""),
+                    "github_sha": os.environ.get("GITHUB_SHA", ""),
+                },
+            },
+            "changed_files": files,
+            "findings": [],
+        }
+        _save_json(payload, str(out / "receipt.json"))
+        lines = [
+            "<!-- semzero-assumption-gate -->",
+            "## SemZero Assumption Gate",
+            "",
+            "**SemZero could not prove this PR is safe.**",
+            "",
+            f"Verdict: `ANALYSIS_INCOMPLETE` · Mode: `{mode}`",
+            f"Reason: `{reason}`",
+            "",
+            message,
+            "",
+            "### What this means",
+            "",
+            "SemZero did **not** find proof that this change is safe. It did not have enough reliable changed-file context to make a normal merge recommendation.",
+            "",
+            "### Required fix",
+            "",
+        ]
+        for item in required_fix:
+            lines.append(f"- {item}")
+        lines.append("")
+        lines.append("_Full diagnostic context is preserved in the JSON receipt artifact._")
+        (out / "comment.md").write_text("\n".join(lines), encoding="utf-8")
+        (out / "changed_files.txt").write_text("\n".join(files), encoding="utf-8")
+        (out / "changed_files.status.json").write_text(
+            json.dumps(payload["summary"]["analysis_status"], indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        click.echo("\n  SemZero Assumption CI")
+        click.echo("  Verdict: ANALYSIS_INCOMPLETE")
+        click.echo(f"  Reason: {reason}")
+        click.echo(f"  Artifacts → {out}\n")
+
+
     files = _split(changed_files)
     effective_base = base_ref or (
         f"origin/{os.environ.get('GITHUB_BASE_REF')}"
@@ -972,6 +1033,24 @@ def assumption_ci(
     if not files:
         name_blob = _run_git(["git", "diff", "--name-only", f"{effective_base}...HEAD"])
         files = _split(name_blob)
+
+    event_name = os.environ.get("GITHUB_EVENT_NAME", "")
+    in_pull_request = event_name == "pull_request" or bool(os.environ.get("GITHUB_BASE_REF"))
+
+    if not files and in_pull_request:
+        _write_analysis_incomplete_artifacts(
+            reason="changed_file_discovery_empty_in_pull_request",
+            message=(
+                "Changed-file discovery returned no files in pull_request context. "
+                "SemZero cannot distinguish a truly empty PR from a shallow-checkout or base-ref discovery failure."
+            ),
+            required_fix=[
+                "Use actions/checkout@v4 with fetch-depth: 0.",
+                "Ensure the PR base ref is fetched before running SemZero.",
+                "Check changed_files.debug.txt and changed_files.status.json in the SemZero artifact.",
+            ],
+        )
+        return
 
     dbt_like = [
         item
@@ -995,6 +1074,11 @@ def assumption_ci(
                 "finding_count": 0,
                 "changed_resource_count": 0,
                 "blast_radius_resource_count": 0,
+                "analysis_status": {
+                    "status": "COMPLETE",
+                    "reason": "no_dbt_like_files_changed",
+                    "message": "Changed files were discovered, but none matched the focused dbt Assumption Gate scope.",
+                },
             },
             "changed_files": files,
             "findings": [],

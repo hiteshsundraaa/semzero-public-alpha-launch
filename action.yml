@@ -107,7 +107,23 @@ runs:
         git fetch origin "${base_branch}" --depth=1 || true
 
         echo "SemZero: changed files against ${base_ref}"
-        git diff "${base_ref}...HEAD" --name-only | tee "${{ inputs.artifact-dir }}/changed_files.debug.txt" || true
+        set +e
+        git diff "${base_ref}...HEAD" --name-only > "${{ inputs.artifact-dir }}/changed_files.debug.txt"
+        diff_status=$?
+        set -e
+        changed_file_count="$(grep -c . "${{ inputs.artifact-dir }}/changed_files.debug.txt" || true)"
+        {
+          printf '{\n'
+          printf '  "base_ref": "%s",\n' "${base_ref}"
+          printf '  "git_diff_exit_code": %s,\n' "${diff_status}"
+          printf '  "changed_file_count": %s,\n' "${changed_file_count}"
+          printf '  "github_event_name": "%s",\n' "${GITHUB_EVENT_NAME:-}"
+          printf '  "github_base_ref": "%s"\n' "${GITHUB_BASE_REF:-}"
+          printf '}\n'
+        } > "${{ inputs.artifact-dir }}/changed_files.status.json"
+        cat "${{ inputs.artifact-dir }}/changed_files.debug.txt"
+
+        changed_files_arg="$(cat "${{ inputs.artifact-dir }}/changed_files.debug.txt")"
 
         manifest_flag=""
         if [ -f "${{ inputs.manifest-path }}" ]; then
@@ -120,6 +136,7 @@ runs:
         semzero assumption-ci \
           --project-dir . \
           --base-ref "$base_ref" \
+          --changed-files "$changed_files_arg" \
           --output-dir "${{ inputs.artifact-dir }}" \
           --mode "${{ inputs.mode }}" \
           $manifest_flag \
