@@ -1963,8 +1963,7 @@ def _comment_why_now(finding: AssumptionFindingV1) -> str:
 
     return (
         "This PR touched a dbt resource connected to this assumption. "
-        "Explicit before/after semantic diff was not available, so SemZero used "
-        "changed-resource reachability plus static detector evidence."
+        "SemZero used PR diff context, changed-resource reachability, and static detector evidence."
     )
 
 
@@ -2128,8 +2127,7 @@ def _comment_why_now(finding: AssumptionFindingV1) -> str:
 
     return (
         "This PR touched a dbt resource connected to this assumption. "
-        "Explicit before/after semantic diff was not available, so SemZero used "
-        "changed-resource reachability plus static detector evidence."
+        "SemZero used PR diff context, changed-resource reachability, and static detector evidence."
     )
 
 
@@ -2402,6 +2400,60 @@ def _should_demote_to_advisory(finding: AssumptionFindingV1) -> bool:
     )
 
 
+
+def _comment_trigger_summary(finding: AssumptionFindingV1) -> str:
+    """Reviewer-safe trigger summary.
+
+    Avoid raw diff hunk headers, schema-qualified debug SQL, and mid-token snippets.
+    Full detector evidence remains in receipt.json.
+    """
+    family = str(getattr(finding, "family", "") or "").lower()
+    detector = str((finding.pattern_detail or {}).get("pattern_type", "") or "").lower()
+
+    evidence = getattr(finding, "evidence", None) or {}
+    pattern_detail = getattr(finding, "pattern_detail", None) or {}
+
+    resource = (
+        getattr(finding, "changed_resource", None)
+        or getattr(finding, "resource_name", None)
+        or evidence.get("resource_name")
+        or evidence.get("path")
+        or pattern_detail.get("resource_name")
+        or pattern_detail.get("path")
+    )
+
+    if resource:
+        resource_text = f"`{resource}`"
+    else:
+        resource_text = "the changed dbt resource"
+
+    if "enum" in family or "domain" in family or "enum" in detector:
+        return (
+            f"{resource_text} — status/domain mapping changed in conditional logic. "
+            "Check whether downstream mappings, filters, accepted values, or dashboards still match the new default."
+        )
+
+    if "null" in family or "fallback" in family or "default" in family:
+        return (
+            f"{resource_text} — fallback/default handling changed. "
+            "Check whether null or default values still carry the same business meaning."
+        )
+
+    if "join" in family or "cardinality" in family or "fanout" in family or "join" in detector:
+        return (
+            f"{resource_text} — join or aggregation grain is connected to the changed model. "
+            "Check whether key uniqueness and deduplication assumptions still hold."
+        )
+
+    if "temporal" in family or "date" in family or "time" in family:
+        return (
+            f"{resource_text} — date/time bucketing or filtering changed. "
+            "Check whether downstream reporting windows still mean the same thing."
+        )
+
+    return f"{resource_text} — SemZero found assumption-relevant structural evidence connected to this PR change."
+
+
 def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) -> list[str]:
     finding = group[0]
     detector = (finding.pattern_detail or {}).get("pattern_type", finding.family)
@@ -2444,10 +2496,10 @@ def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) ->
     lines += [
         f"   - **Reviewer action:** {finding.recommended_check}",
         f"   - **Why it matters:** {_finding_blast_summary(finding)}",
-        f"   - **What triggered this:** {_comment_why_now(finding)}",
+        f"   - **What triggered this:** {_comment_trigger_summary(finding)}",
         f"   - **Confidence:** `{fidelity_text}`. Evidence tier: `{priority['fidelity_tier']}`. Replay: `{priority['replay_status']}`.",
         f"   - **Reference:** **{stable_label}:** {stable_id_text}",
-        f"   - **Score detail:** impact `{priority['impact_score']}` × evidence `{priority['evidence_score']}` → raw `{priority['raw_formula_score']}/100`; raw detector risk `{priority['raw_detector_risk']}/100`.",
+        f"   - **Score detail:** impact `{priority['impact_score']}` × evidence `{priority['evidence_score']}` → displayed priority `{priority['score']}/100`.",
         f"   - **Technical detail:** drift `{drift}` · business `{business}` · control coverage `{control}` · detector `{detector}`",
         f"   - **Validation replay:** `{validation_status}` · {validation_summary}",
         "",
@@ -2501,11 +2553,22 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     cost_run = summary.get("estimated_extra_cost_per_run_usd")
     biz_summary = (summary.get("business_impact") or {}).get("summary")
 
-    if must_review_groups:
-        lead_target = "customer-facing data" if biz_summary and "customer" in str(biz_summary).lower() else "downstream dbt data"
-        lead_sentence = f"{len(must_review_groups)} assumption may break {lead_target}. Review before merging."
-    elif useful_advisory_groups:
-        lead_sentence = f"{len(useful_advisory_groups)} assumption needs attention before this change becomes enforced."
+    must_review_count = len(must_review_groups)
+    advisory_count = len(useful_advisory_groups)
+
+    if biz_summary and "revenue" in str(biz_summary).lower():
+        lead_target = "revenue-critical data"
+    elif biz_summary and "customer" in str(biz_summary).lower():
+        lead_target = "customer-facing data"
+    else:
+        lead_target = "downstream dbt data"
+
+    if must_review_count and advisory_count:
+        lead_sentence = f"{must_review_count} assumption may break {lead_target}. {advisory_count} additional advisory finding."
+    elif must_review_count:
+        lead_sentence = f"{must_review_count} assumption may break {lead_target}. Review before merging."
+    elif advisory_count:
+        lead_sentence = f"{advisory_count} advisory finding needs attention before this change becomes enforced."
     elif findings:
         lead_sentence = f"{len(findings)} assumption signal found. Review before relying on this change."
     else:
@@ -2517,7 +2580,7 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
         "",
         f"**{lead_sentence}**",
         "",
-        f"Verdict: `{receipt.verdict}` · Mode: `{receipt.mode}` · Finding(s): `{len(findings)}`",
+        f"Verdict: `{receipt.verdict}` · Mode: `{receipt.mode}` · Review-required: `{must_review_count}` · Advisory: `{advisory_count}`",
         f"Changed dbt resource(s): `{summary.get('changed_resource_count', 0)}` · Affected downstream resource(s): `{summary.get('blast_radius_resource_count', 0)}`",
     ]
     if cost_run is not None or cost_month is not None:
@@ -2622,9 +2685,10 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
         ]
         for fid in calibration_targets:
             lines += [
-                f"`/semzero agree {fid}`",
-                f"`/semzero false-positive {fid}`",
-                f"`/semzero accepted-risk {fid}`",
+                f"Finding `{fid}`:",
+                f"- `/semzero agree {fid}`",
+                f"- `/semzero false-positive {fid}`",
+                f"- `/semzero accepted-risk {fid}`",
                 "",
             ]
 
