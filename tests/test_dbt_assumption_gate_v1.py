@@ -217,3 +217,59 @@ def test_v1_13_materialization_cost_family_detects_full_rebuild_path(tmp_path: P
     )
     assert materialization["cost_estimate"]["engine"] == "databricks"
     assert "Databricks" in materialization["cost_estimate"]["engine_note"]
+
+def _write_minimal_manifest(tmp_path):
+    manifest = {
+        "metadata": {"dbt_version": "1.0.0"},
+        "nodes": {
+            "model.test.orders": {
+                "unique_id": "model.test.orders",
+                "resource_type": "model",
+                "name": "orders",
+                "original_file_path": "models/orders.sql",
+                "depends_on": {"nodes": []},
+                "raw_code": "select 1 as order_id",
+                "compiled_code": "select 1 as order_id",
+                "columns": {},
+                "config": {},
+                "meta": {},
+                "tags": [],
+            }
+        },
+        "sources": {},
+        "child_map": {},
+        "parent_map": {},
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path
+
+
+def test_analysis_incomplete_when_no_changed_files(tmp_path):
+    manifest_path = _write_minimal_manifest(tmp_path)
+    gate = DbtAssumptionGate(manifest_path)
+
+    receipt = gate.run([])
+
+    assert receipt.verdict == "ANALYSIS_INCOMPLETE"
+    assert receipt.summary["analysis_status"]["reason"] == "changed_file_discovery_empty"
+
+    comment = render_pr_comment(receipt)
+    assert "SemZero could not prove this PR is safe" in comment
+    assert "SemZero did **not** find proof that this change is safe" in comment
+    assert "ALLOW" not in comment
+
+
+def test_analysis_incomplete_when_dbt_file_not_mapped_to_manifest(tmp_path):
+    manifest_path = _write_minimal_manifest(tmp_path)
+    gate = DbtAssumptionGate(manifest_path)
+
+    receipt = gate.run(["models/not_in_manifest.sql"])
+
+    assert receipt.verdict == "ANALYSIS_INCOMPLETE"
+    assert receipt.summary["analysis_status"]["reason"] == "dbt_changed_files_not_mapped_to_manifest"
+
+    comment = render_pr_comment(receipt)
+    assert "ANALYSIS_INCOMPLETE" in comment
+    assert "models/not_in_manifest.sql" in comment
+

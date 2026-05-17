@@ -494,13 +494,20 @@ class DbtAssumptionGate:
         findings = self._scan_assumptions(scan_ids, changed_ids, blast_ids, trigger_report)
         findings = self._deduplicate_findings(findings)
         self._apply_exceptions(findings, receipt_key="pending")
-        verdict = self._verdict(findings)
+        analysis_status = self._analysis_status(changed_files_norm, changed_ids)
+        verdict = self._verdict(findings, analysis_status=analysis_status)
         changed_resources = [
             self._resource_ref(self.resources[rid])
             for rid in sorted(changed_ids)
             if rid in self.resources
         ]
-        summary = self._summary(findings, changed_ids, blast_ids, trigger_report)
+        summary = self._summary(
+            findings,
+            changed_ids,
+            blast_ids,
+            trigger_report,
+            analysis_status=analysis_status,
+        )
         return AssumptionGateReceiptV1(
             semzero_version=self._version(),
             mode=mode,
@@ -1543,7 +1550,71 @@ class DbtAssumptionGate:
             ),
         )
 
-    def _verdict(self, findings: list[AssumptionFindingV1]) -> str:
+    def _analysis_status(
+        self,
+        changed_files: list[str],
+        changed_ids: set[str],
+    ) -> dict[str, Any]:
+        """Return whether the gate had enough evidence to make a safe decision.
+
+        This prevents the dangerous false-benign state where SemZero could not
+        inspect the PR but still returns ALLOW.
+        """
+        dbt_like_files = [
+            path
+            for path in changed_files
+            if path.endswith((".sql", ".yml", ".yaml"))
+            and (
+                path.startswith("models/")
+                or path.startswith("seeds/")
+                or path.startswith("snapshots/")
+                or path.startswith("analyses/")
+                or path == "dbt_project.yml"
+                or path.endswith("schema.yml")
+                or path.endswith("schema.yaml")
+            )
+        ]
+
+        if not changed_files:
+            return {
+                "status": "ANALYSIS_INCOMPLETE",
+                "reason": "changed_file_discovery_empty",
+                "message": "No changed files were supplied to the assumption gate.",
+                "required_fix": [
+                    "Ensure the workflow passes PR changed files into SemZero.",
+                    "Use actions/checkout@v4 with fetch-depth: 0 in pull_request workflows.",
+                    "Verify the PR base ref is fetchable before running the gate.",
+                ],
+            }
+
+        if dbt_like_files and not changed_ids:
+            return {
+                "status": "ANALYSIS_INCOMPLETE",
+                "reason": "dbt_changed_files_not_mapped_to_manifest",
+                "message": "dbt-like files changed, but SemZero could not map them to dbt manifest resources.",
+                "changed_dbt_like_files": dbt_like_files[:25],
+                "required_fix": [
+                    "Confirm manifest.json was generated from the same checkout as the PR.",
+                    "Run dbt compile before SemZero when possible.",
+                    "Check whether changed files are disabled, renamed, generated, or missing from dbt_project.yml model paths.",
+                ],
+            }
+
+        return {
+            "status": "COMPLETE",
+            "reason": "analysis_completed",
+            "message": "SemZero had enough changed-file and manifest evidence to evaluate the focused dbt scope.",
+        }
+
+
+    def _verdict(
+        self,
+        findings: list[AssumptionFindingV1],
+        analysis_status: dict[str, Any] | None = None,
+    ) -> str:
+        status = (analysis_status or {}).get("status")
+        if status in {"ANALYSIS_INCOMPLETE", "CONFIG_ERROR"}:
+            return str(status)
         if any(f.severity == "critical" for f in findings):
             return "REQUIRE_REVIEW"
         if any(f.severity == "high" for f in findings):
@@ -1558,6 +1629,7 @@ class DbtAssumptionGate:
         changed_ids: set[str],
         blast_ids: set[str],
         trigger_report: dict[str, dict[str, Any]] | None = None,
+        analysis_status: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         family_counts: dict[str, int] = {}
         severity_counts: dict[str, int] = {}
@@ -1596,6 +1668,10 @@ class DbtAssumptionGate:
             "finding_count": len(findings),
             "families": family_counts,
             "severity_counts": severity_counts,
+            "analysis_status": analysis_status or {
+                "status": "COMPLETE",
+                "reason": "analysis_completed",
+            },
             "changed_resource_count": len(changed_ids),
             "blast_radius_resource_count": len(blast_ids),
             "estimated_extra_cost_per_run_usd": round(cost_total, 2) if has_cost else None,
@@ -2524,6 +2600,64 @@ def _render_comment_finding_group(group: list[AssumptionFindingV1], idx: int) ->
     return lines
 
 
+
+def _render_incomplete_analysis_comment(receipt: AssumptionGateReceiptV1) -> str:
+    data = receipt.to_dict()
+    summary = data.get("summary", {})
+    analysis = summary.get("analysis_status") or {}
+    status = str(analysis.get("status") or receipt.verdict)
+    reason = analysis.get("reason") or "unknown"
+    message = analysis.get("message") or "SemZero could not complete analysis for this PR."
+    required_fix = analysis.get("required_fix") or []
+    changed_files = data.get("changed_files") or []
+
+    title = "SemZero could not prove this PR is safe."
+    if status == "CONFIG_ERROR":
+        title = "SemZero configuration prevented a safe review."
+
+    lines = [
+        "<!-- semzero-assumption-gate -->",
+        "## SemZero Assumption Gate",
+        "",
+        f"**{title}**",
+        "",
+        f"Verdict: `{status}` · Mode: `{receipt.mode}`",
+        f"Reason: `{reason}`",
+        "",
+        message,
+        "",
+        "### What this means",
+        "",
+        "SemZero did **not** find proof that this change is safe. It did not have enough reliable analysis context to make a normal merge recommendation.",
+        "",
+    ]
+
+    if changed_files:
+        lines += [
+            "### Changed files seen by SemZero",
+            "",
+        ]
+        for path in changed_files[:20]:
+            lines.append(f"- `{path}`")
+        if len(changed_files) > 20:
+            lines.append(f"- ...and `{len(changed_files) - 20}` more")
+        lines.append("")
+
+    if required_fix:
+        lines += [
+            "### Required fix",
+            "",
+        ]
+        for item in required_fix:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    lines += [
+        "_Full diagnostic context is preserved in the JSON receipt artifact._",
+    ]
+    return "\n".join(lines)
+
+
 def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -> str:
     """Render a compact reviewer-first PR comment.
 
@@ -2531,6 +2665,9 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
     findings into reviewer-action items so engineers do not see duplicated
     walls of text.
     """
+    if receipt.verdict in {"ANALYSIS_INCOMPLETE", "CONFIG_ERROR"}:
+        return _render_incomplete_analysis_comment(receipt)
+
     data = receipt.to_dict()
     findings = sorted(
         receipt.findings,
