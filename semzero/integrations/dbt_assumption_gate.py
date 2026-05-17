@@ -324,6 +324,7 @@ class DbtAssumptionGate:
             self._enrich_from_run_results(run_results_path)
         self.children = self._build_children(self.resources)
         self.tests_by_parent = self._build_tests_by_parent(self.resources)
+        self.setup_state = self._setup_state()
 
     @staticmethod
     def _load_resources(payload: dict[str, Any]) -> dict[str, DbtResource]:
@@ -470,6 +471,92 @@ class DbtAssumptionGate:
             for parent in resource.depends_on:
                 tests.setdefault(parent, []).append(resource)
         return tests
+
+    def _setup_state(self) -> dict[str, Any]:
+        """Describe how configured this repository is for SemZero.
+
+        DISCOVERY means SemZero can still produce useful inferred findings, but
+        explicit owner/criticality/contracts/replay evidence are not yet present.
+        """
+        signals = {
+            "business_criticality_registry": bool(getattr(self, "criticality_registry", None)),
+            "warehouse_history": bool(getattr(self, "warehouse_history", None)),
+            "replay_fixtures": bool(getattr(self, "replay_fixtures", None)),
+            "catalog": bool(getattr(self, "catalog", None) or getattr(self, "catalog_path", None)),
+            "run_results": bool(getattr(self, "run_results", None) or getattr(self, "run_results_path", None)),
+            "exceptions": bool(getattr(self, "exceptions", None)),
+        }
+
+        explicit_owner_count = 0
+        explicit_criticality_count = 0
+        explicit_contract_like_count = 0
+
+        for resource in getattr(self, "resources", {}).values():
+            meta = getattr(resource, "meta", None) or {}
+            config = getattr(resource, "config", None) or {}
+            columns = getattr(resource, "columns", None) or {}
+
+            if getattr(resource, "owner", "") or meta.get("owner") or meta.get("owners"):
+                explicit_owner_count += 1
+
+            criticality = (
+                meta.get("criticality")
+                or meta.get("semzero_criticality")
+                or config.get("criticality")
+                or config.get("semzero_criticality")
+            )
+            if criticality:
+                explicit_criticality_count += 1
+
+            semzero_meta = meta.get("semzero") if isinstance(meta.get("semzero"), dict) else {}
+            if (
+                semzero_meta
+                or meta.get("grain")
+                or meta.get("primary_key")
+                or meta.get("accepted_values")
+                or meta.get("allowed_values")
+                or any((col or {}).get("tests") for col in columns.values() if isinstance(col, dict))
+            ):
+                explicit_contract_like_count += 1
+
+        configured_signal_count = sum(1 for value in signals.values() if value)
+        configured_signal_count += 1 if explicit_owner_count else 0
+        configured_signal_count += 1 if explicit_criticality_count else 0
+        configured_signal_count += 1 if explicit_contract_like_count else 0
+
+        if configured_signal_count >= 3:
+            status = "CONFIGURED"
+        elif configured_signal_count >= 1:
+            status = "PARTIAL"
+        else:
+            status = "DISCOVERY"
+
+        missing_next_steps = []
+        if not explicit_owner_count:
+            missing_next_steps.append("add owner metadata for important models")
+        if not explicit_criticality_count and not signals["business_criticality_registry"]:
+            missing_next_steps.append("add business criticality labels for marts/exposures")
+        if not explicit_contract_like_count:
+            missing_next_steps.append("add grain, primary-key, or accepted-value assumptions for core models")
+        if not signals["replay_fixtures"]:
+            missing_next_steps.append("add replay fixtures for high-value assumption families")
+
+        return {
+            "status": status,
+            "configured_signal_count": configured_signal_count,
+            "signals": signals,
+            "explicit_owner_count": explicit_owner_count,
+            "explicit_criticality_count": explicit_criticality_count,
+            "explicit_contract_like_count": explicit_contract_like_count,
+            "message": (
+                "SemZero is using inferred dbt lineage and static SQL evidence."
+                if status == "DISCOVERY"
+                else "SemZero found some explicit setup signals."
+            ),
+            "suggested_next_steps": missing_next_steps[:5],
+        }
+
+
 
     def run(
         self, changed_files: Iterable[str], mode: str = "shadow", changed_diff: str = ""
@@ -1672,6 +1759,7 @@ class DbtAssumptionGate:
                 "status": "COMPLETE",
                 "reason": "analysis_completed",
             },
+            "setup_state": getattr(self, "setup_state", {"status": "UNKNOWN"}),
             "changed_resource_count": len(changed_ids),
             "blast_radius_resource_count": len(blast_ids),
             "estimated_extra_cost_per_run_usd": round(cost_total, 2) if has_cost else None,
@@ -2763,6 +2851,38 @@ def render_pr_comment(receipt: AssumptionGateReceiptV1, max_findings: int = 5) -
         lines.append(
             f"**Assumption diffing:** `{diff_summary.get('explicit_before_after_diff_count', 0)}` finding(s) have explicit before/after PR context"
         )
+    setup_state = summary.get("setup_state") or {}
+    if setup_state.get("status") == "DISCOVERY":
+        steps = setup_state.get("suggested_next_steps") or []
+        lines += [
+            "### SemZero setup note",
+            "",
+            "This repo is in **discovery mode**. SemZero did not find explicit SemZero contracts, owner metadata, replay fixtures, or business criticality registry, so this review uses inferred dbt lineage and static SQL evidence.",
+            "",
+        ]
+        if steps:
+            lines += [
+                "To improve future review quality:",
+                "",
+            ]
+            for step in steps[:4]:
+                lines.append(f"- {step}")
+            lines.append("")
+    elif setup_state.get("status") == "PARTIAL":
+        steps = setup_state.get("suggested_next_steps") or []
+        if steps:
+            lines += [
+                "### SemZero setup note",
+                "",
+                "SemZero found partial setup metadata. Future review quality improves as owners, criticality, contracts, and replay fixtures are added.",
+                "",
+                "Suggested next setup steps:",
+                "",
+            ]
+            for step in steps[:3]:
+                lines.append(f"- {step}")
+            lines.append("")
+
     lines.append("")
 
     if not findings:

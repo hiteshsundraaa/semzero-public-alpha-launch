@@ -310,3 +310,24 @@ def test_assumption_ci_manifest_missing_writes_config_error(tmp_path, monkeypatc
     assert "CONFIG_ERROR" in comment
     assert "configuration prevented a safe review" in comment
     assert "dbt manifest was not found" in comment
+
+def test_discovery_mode_setup_state_appears_without_optional_setup(tmp_path):
+    manifest_path = _write_minimal_manifest(tmp_path)
+    gate = DbtAssumptionGate(manifest_path)
+
+    receipt = gate.run(["models/orders.sql"])
+
+    assert receipt.summary["setup_state"]["status"] == "DISCOVERY"
+    assert "suggested_next_steps" in receipt.summary["setup_state"]
+
+
+def test_discovery_mode_note_appears_in_review_comment(tmp_path):
+    manifest_path = _write_minimal_manifest(tmp_path)
+    gate = DbtAssumptionGate(manifest_path)
+
+    receipt = gate.run(["models/orders.sql"])
+    comment = render_pr_comment(receipt)
+
+    assert "SemZero setup note" in comment
+    assert "discovery mode" in comment
+    assert "inferred dbt lineage and static SQL evidence" in comment
