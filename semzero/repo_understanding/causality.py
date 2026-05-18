@@ -172,6 +172,131 @@ def _snapshot_models(repo_snapshot: dict[str, Any] | None) -> dict[str, Any]:
     return models if isinstance(models, dict) else {}
 
 
+
+STRUCTURAL_DEPENDENCY_FAMILIES = {
+    "join_cardinality",
+    "join_grain_or_fanout",
+    "grain_change",
+    "primary_key_changed",
+}
+
+
+STRUCTURAL_CONTRACT_TYPES = {
+    "grain",
+    "relationship",
+    "primary_key",
+    "unique",
+    "uniqueness",
+    "referential_integrity",
+}
+
+
+STRUCTURAL_PROPERTY_TERMS = {
+    "grain",
+    "unique",
+    "uniqueness",
+    "primary key",
+    "primary_key",
+    "pk",
+    "relationship",
+    "referential",
+    "foreign key",
+    "foreign_key",
+    "join",
+    "fanout",
+    "cardinality",
+}
+
+
+def _requires_property_specific_dependency(finding: dict[str, Any]) -> bool:
+    return _family(finding) in STRUCTURAL_DEPENDENCY_FAMILIES
+
+
+def _contract_is_property_specific_for_family(
+    contract: dict[str, Any],
+    family: str,
+) -> bool:
+    dependency_type = str(contract.get("dependency_type") or "").lower()
+    dependent_property = str(contract.get("dependent_property") or "").lower()
+    column = str(contract.get("column") or contract.get("column_name") or "").lower()
+
+    if dependency_type in STRUCTURAL_CONTRACT_TYPES:
+        return True
+
+    if any(term in dependent_property for term in STRUCTURAL_PROPERTY_TERMS):
+        return True
+
+    if family in {"primary_key_changed", "grain_change"}:
+        if "id" in column or column.endswith("_key") or column.endswith("_id"):
+            return True
+
+    return False
+
+
+def _best_property_specific_contract_signal(
+    uid: str,
+    model: dict[str, Any],
+    family: str,
+) -> tuple[bool, str, float, list[str], str, int]:
+    contracts = model.get("contracts") or []
+    if not isinstance(contracts, list):
+        return False, "UNKNOWN", 0.0, [], "repo_snapshot_no_property_specific_dependency_signal", 999
+
+    own_sens = model.get("sensitivity") or {}
+    own_label = "UNKNOWN"
+    if isinstance(own_sens, dict):
+        own_label = str(own_sens.get("label") or "UNKNOWN").upper()
+        if own_label == "HIGH":
+            own_label = "REVENUE_CRITICAL"
+        elif own_label == "MEDIUM":
+            own_label = "OPERATIONAL"
+        elif own_label == "LOW":
+            own_label = "ANALYTICAL"
+
+    own_weight = SENSITIVITY_WEIGHT.get(own_label, SENSITIVITY_WEIGHT["UNKNOWN"])
+
+    best_label = "UNKNOWN"
+    best_weight = SENSITIVITY_WEIGHT["UNKNOWN"]
+    best_confidence = 0.0
+    best_path: list[str] = []
+    best_distance = 999
+
+    for contract in contracts:
+        if not isinstance(contract, dict):
+            continue
+        if not _contract_is_property_specific_for_family(contract, family):
+            continue
+
+        contract_confidence = float(contract.get("confidence") or 0.65)
+        downstream_model = str(contract.get("downstream_model") or "")
+
+        path = [uid]
+        distance = 0
+        if downstream_model and downstream_model != uid:
+            path = [uid, downstream_model]
+            distance = 1
+
+        if own_weight > best_weight or (
+            own_weight == best_weight and contract_confidence > best_confidence
+        ):
+            best_label = own_label
+            best_weight = own_weight
+            best_confidence = contract_confidence
+            best_path = path
+            best_distance = distance
+
+    if not best_path or best_weight <= SENSITIVITY_WEIGHT["UNKNOWN"]:
+        return False, "UNKNOWN", 0.0, [], "repo_snapshot_no_property_specific_dependency_signal", 999
+
+    return (
+        True,
+        best_label,
+        min(0.60, max(0.35, best_confidence)),
+        best_path,
+        "repo_snapshot_property_specific_contract",
+        best_distance,
+    )
+
 def _snapshot_dependency_signal(
     finding: dict[str, Any],
     repo_snapshot: dict[str, Any] | None,
@@ -182,13 +307,7 @@ def _snapshot_dependency_signal(
         return False, "UNKNOWN", 0.0, [], "no_repo_snapshot", 999
 
     family = _family(finding)
-    requires_downstream_for_dependency = family in {
-        "join_cardinality",
-        "join_grain_or_fanout",
-        "grain_change",
-        "primary_key_changed",
-    }
-
+    requires_property_specific_dependency = _requires_property_specific_dependency(finding)
     candidates = _changed_resource_ids(finding, changed_resources)
 
     best_label = "UNKNOWN"
@@ -228,6 +347,33 @@ def _snapshot_dependency_signal(
             fallback_own_weight = own_weight
             fallback_own_path = [uid]
 
+        if requires_property_specific_dependency:
+            (
+                present,
+                label,
+                _confidence,
+                path,
+                source,
+                distance,
+            ) = _best_property_specific_contract_signal(uid, model, family)
+
+            if present:
+                weight = SENSITIVITY_WEIGHT.get(label, SENSITIVITY_WEIGHT["UNKNOWN"])
+                if weight > best_weight or (
+                    weight == best_weight and distance < best_distance
+                ):
+                    best_label = label
+                    best_weight = weight
+                    best_path = path
+                    best_distance = distance
+                    best_source = source
+
+            # Structural join/grain/PK families must not use generic downstream
+            # lineage as dependency proof. Generic lineage only says something
+            # downstream exists; it does not prove that the changed property is
+            # the grain/key/cardinality contract that downstream relies on.
+            continue
+
         for downstream in model.get("downstream") or []:
             if not isinstance(downstream, dict):
                 continue
@@ -254,7 +400,7 @@ def _snapshot_dependency_signal(
                 best_source = "repo_snapshot_downstream"
 
         contracts = model.get("contracts") or []
-        if contracts and not requires_downstream_for_dependency and not best_path:
+        if contracts and not best_path:
             best_label = own_label
             best_weight = max(own_weight, SENSITIVITY_WEIGHT["UNKNOWN"])
             best_path = [uid]
@@ -262,12 +408,15 @@ def _snapshot_dependency_signal(
             best_source = "repo_snapshot_contract_on_changed_resource"
 
     if best_path:
-        confidence = 0.80 if best_distance <= 1 else 0.65 if best_distance <= 2 else 0.45
+        if best_source == "repo_snapshot_property_specific_contract":
+            confidence = 0.60 if best_distance <= 1 else 0.45
+        else:
+            confidence = 0.80 if best_distance <= 1 else 0.65 if best_distance <= 2 else 0.45
         return True, best_label, confidence, best_path, best_source, best_distance
 
     if (
         fallback_own_path
-        and not requires_downstream_for_dependency
+        and not requires_property_specific_dependency
         and fallback_own_weight > SENSITIVITY_WEIGHT["UNKNOWN"]
     ):
         return (
@@ -277,6 +426,16 @@ def _snapshot_dependency_signal(
             fallback_own_path,
             "repo_snapshot_changed_resource_sensitivity_fallback",
             0,
+        )
+
+    if requires_property_specific_dependency:
+        return (
+            False,
+            "UNKNOWN",
+            0.0,
+            [],
+            "repo_snapshot_no_property_specific_dependency_signal",
+            999,
         )
 
     return False, "UNKNOWN", 0.0, [], "repo_snapshot_no_dependency_signal", 999
