@@ -3805,6 +3805,89 @@ def ops_report(gate_path, wind_path, chaos_path, markdown_out):
     click.echo(f"\n  Unified report → {markdown_out}\n")
 
 
+
+@cli.command("memory-init")
+@click.option("--db", "db_path", default="data/semzero_memory.sqlite", show_default=True)
+def memory_init_cmd(db_path):
+    """Initialize the local SemZero memory/flywheel SQLite database."""
+    from semzero.repo_understanding.repo_memory import SemZeroMemoryDB
+
+    SemZeroMemoryDB(db_path).init()
+    click.echo(f"SemZero memory DB initialized: {db_path}")
+
+
+@cli.command("memory-ingest")
+@click.option("--db", "db_path", default="data/semzero_memory.sqlite", show_default=True)
+@click.option("--receipt", default="", help="Path to SemZero receipt.json.")
+@click.option("--repo-snapshot", default="", help="Path to SemZero repo_snapshot.json.")
+@click.option("--repo", default="", help="Repository identifier, e.g. owner/repo.")
+@click.option("--pr-number", default="", help="Pull request number, if known.")
+@click.option("--commit-sha", default="", help="Commit SHA, if known.")
+@click.option("--action-sha", default="", help="SemZero Action SHA, if known.")
+def memory_ingest_cmd(db_path, receipt, repo_snapshot, repo, pr_number, commit_sha, action_sha):
+    """Ingest receipt/repo snapshot artifacts into the local SemZero memory DB."""
+    from semzero.repo_understanding.repo_memory import SemZeroMemoryDB
+
+    if not receipt and not repo_snapshot:
+        raise click.ClickException("Provide --receipt and/or --repo-snapshot.")
+
+    db = SemZeroMemoryDB(db_path)
+    outputs = []
+
+    if repo_snapshot:
+        outputs.append(db.ingest_snapshot(repo_snapshot, repo=repo))
+
+    if receipt:
+        outputs.append(
+            db.ingest_receipt(
+                receipt,
+                repo=repo,
+                pr_number=pr_number,
+                commit_sha=commit_sha,
+                action_sha=action_sha,
+            )
+        )
+
+    click.echo(json.dumps(outputs, indent=2, sort_keys=True))
+
+
+@cli.command("memory-calibrate")
+@click.option("--db", "db_path", default="data/semzero_memory.sqlite", show_default=True)
+@click.option("--stable-id", required=True, help="Finding stable ID.")
+@click.option(
+    "--response",
+    required=True,
+    type=click.Choice(["agree", "fixed", "false_positive", "accepted_risk"]),
+    help="Reviewer calibration response.",
+)
+@click.option("--repo", default="", help="Repository identifier.")
+@click.option("--actor", default="", help="Reviewer/user who calibrated the finding.")
+@click.option("--reason", default="", help="Optional reason.")
+@click.option("--run-id", default="", help="Optional run ID to disambiguate repeated stable IDs.")
+def memory_calibrate_cmd(db_path, stable_id, response, repo, actor, reason, run_id):
+    """Record reviewer calibration against a SemZero finding."""
+    from semzero.repo_understanding.repo_memory import SemZeroMemoryDB
+
+    payload = SemZeroMemoryDB(db_path).record_calibration(
+        stable_id=stable_id,
+        response=response,
+        repo=repo,
+        actor=actor,
+        reason=reason,
+        run_id=run_id,
+    )
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@cli.command("memory-summary")
+@click.option("--db", "db_path", default="data/semzero_memory.sqlite", show_default=True)
+def memory_summary_cmd(db_path):
+    """Summarize the local SemZero memory/flywheel database."""
+    from semzero.repo_understanding.repo_memory import SemZeroMemoryDB
+
+    click.echo(json.dumps(SemZeroMemoryDB(db_path).summary(), indent=2, sort_keys=True))
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
