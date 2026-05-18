@@ -796,20 +796,40 @@ def assumption_gate(
         else:
             diff_text = changed_diff
     receipt = gate.run(expanded, mode=mode, changed_diff=diff_text)
-    payload = receipt.to_dict()
-    _save_json(payload, output)
+    receipt_payload = receipt.to_dict()
+
+    try:
+        from semzero.repo_understanding.causality import attach_causality_to_receipt_payload
+
+        receipt_payload = attach_causality_to_receipt_payload(
+            receipt_payload,
+            repo_snapshot=None,
+        )
+    except Exception as exc:
+        receipt_payload.setdefault("summary", {})["causality_summary"] = {
+            "kind": "semzero_causality_summary_v1",
+            "status": "CAUSALITY_ERROR",
+            "message": str(exc),
+        }
+
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    Path(output).write_text(
+        json.dumps(receipt_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
     comment = render_pr_comment(receipt)
     Path(comment_out).parent.mkdir(parents=True, exist_ok=True)
     Path(comment_out).write_text(comment, encoding="utf-8")
 
     click.echo("\n  SemZero Assumption Gate")
     click.echo(f"  Verdict: {receipt.verdict}  |  Mode: {mode}")
-    click.echo(f"  Findings: {payload['summary']['finding_count']}")
-    click.echo(f"  Changed resources: {payload['summary']['changed_resource_count']}")
-    click.echo(f"  Blast radius resources: {payload['summary']['blast_radius_resource_count']}")
-    cost = payload["summary"].get("estimated_extra_cost_per_run_usd")
+    click.echo(f"  Findings: {receipt_payload['summary']['finding_count']}")
+    click.echo(f"  Changed resources: {receipt_payload['summary']['changed_resource_count']}")
+    click.echo(f"  Blast radius resources: {receipt_payload['summary']['blast_radius_resource_count']}")
+    cost = receipt_payload["summary"].get("estimated_extra_cost_per_run_usd")
     if cost is not None:
-        monthly = payload["summary"].get("estimated_extra_cost_per_month_usd")
+        monthly = receipt_payload["summary"].get("estimated_extra_cost_per_month_usd")
         suffix = f" | ${monthly}/month" if monthly is not None else ""
         click.echo(f"  Rough cost exposure: ${cost}/run{suffix}")
     click.echo(f"  Receipt → {output}")
@@ -1263,6 +1283,26 @@ def assumption_ci(
     )
     receipt = gate.run(dbt_like, mode=mode, changed_diff=diff_text)
     payload = receipt.to_dict()
+
+    try:
+        from semzero.repo_understanding.causality import attach_causality_to_receipt_payload
+
+        repo_snapshot_path = out / "repo_snapshot.json"
+        repo_snapshot_payload = None
+        if repo_snapshot_path.exists():
+            repo_snapshot_payload = json.loads(repo_snapshot_path.read_text(encoding="utf-8"))
+
+        payload = attach_causality_to_receipt_payload(
+            payload,
+            repo_snapshot=repo_snapshot_payload,
+        )
+    except Exception as exc:
+        payload.setdefault("summary", {})["causality_summary"] = {
+            "kind": "semzero_causality_summary_v1",
+            "status": "CAUSALITY_ERROR",
+            "message": str(exc),
+        }
+
     receipt_path = out / "receipt.json"
     comment_path = out / "comment.md"
     changed_path = out / "changed_files.txt"
