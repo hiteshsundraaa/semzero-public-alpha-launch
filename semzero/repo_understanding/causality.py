@@ -181,55 +181,105 @@ def _snapshot_dependency_signal(
     if not models:
         return False, "UNKNOWN", 0.0, [], "no_repo_snapshot", 999
 
+    family = _family(finding)
+    requires_downstream_for_dependency = family in {
+        "join_cardinality",
+        "join_grain_or_fanout",
+        "grain_change",
+        "primary_key_changed",
+    }
+
     candidates = _changed_resource_ids(finding, changed_resources)
 
     best_label = "UNKNOWN"
     best_weight = SENSITIVITY_WEIGHT["UNKNOWN"]
     best_path: list[str] = []
     best_distance = 999
+    best_source = "repo_snapshot_downstream"
+
+    fallback_own_label = "UNKNOWN"
+    fallback_own_weight = SENSITIVITY_WEIGHT["UNKNOWN"]
+    fallback_own_path: list[str] = []
 
     for uid in candidates:
         model = models.get(uid)
         if not isinstance(model, dict):
             continue
 
-        # Direct model sensitivity counts, but downstream is stronger.
         own_sens = model.get("sensitivity") or {}
+        own_label = "UNKNOWN"
+        own_weight = SENSITIVITY_WEIGHT["UNKNOWN"]
+
         if isinstance(own_sens, dict):
-            label = str(own_sens.get("label") or "UNKNOWN").upper()
-            weight = SENSITIVITY_WEIGHT.get(label, SENSITIVITY_WEIGHT["UNKNOWN"])
-            if weight > best_weight:
-                best_label = label
-                best_weight = weight
-                best_path = [uid]
-                best_distance = 0
+            own_label = str(own_sens.get("label") or "UNKNOWN").upper()
+            if own_label == "HIGH":
+                own_label = "REVENUE_CRITICAL"
+            elif own_label == "MEDIUM":
+                own_label = "OPERATIONAL"
+            elif own_label == "LOW":
+                own_label = "ANALYTICAL"
+            own_weight = SENSITIVITY_WEIGHT.get(
+                own_label,
+                SENSITIVITY_WEIGHT["UNKNOWN"],
+            )
+
+        if own_weight > fallback_own_weight:
+            fallback_own_label = own_label
+            fallback_own_weight = own_weight
+            fallback_own_path = [uid]
 
         for downstream in model.get("downstream") or []:
             if not isinstance(downstream, dict):
                 continue
+
             label = str(downstream.get("sensitivity") or "UNKNOWN").upper()
+            if label == "HIGH":
+                label = "REVENUE_CRITICAL"
+            elif label == "MEDIUM":
+                label = "OPERATIONAL"
+            elif label == "LOW":
+                label = "ANALYTICAL"
+
             weight = SENSITIVITY_WEIGHT.get(label, SENSITIVITY_WEIGHT["UNKNOWN"])
             distance = int(downstream.get("distance") or 1)
             downstream_uid = str(downstream.get("unique_id") or "")
-            if weight > best_weight or (weight == best_weight and distance < best_distance):
+
+            if weight > best_weight or (
+                weight == best_weight and distance < best_distance
+            ):
                 best_label = label
                 best_weight = weight
                 best_path = [uid, downstream_uid] if downstream_uid else [uid]
                 best_distance = distance
+                best_source = "repo_snapshot_downstream"
 
         contracts = model.get("contracts") or []
-        if contracts and best_weight <= SENSITIVITY_WEIGHT["UNKNOWN"]:
-            best_label = str((model.get("sensitivity") or {}).get("label") or "UNKNOWN").upper()
-            best_weight = max(best_weight, SENSITIVITY_WEIGHT.get(best_label, 0.30))
+        if contracts and not requires_downstream_for_dependency and not best_path:
+            best_label = own_label
+            best_weight = max(own_weight, SENSITIVITY_WEIGHT["UNKNOWN"])
             best_path = [uid]
             best_distance = 0
+            best_source = "repo_snapshot_contract_on_changed_resource"
 
     if best_path:
         confidence = 0.80 if best_distance <= 1 else 0.65 if best_distance <= 2 else 0.45
-        return True, best_label, confidence, best_path, "repo_snapshot_downstream_or_contract", best_distance
+        return True, best_label, confidence, best_path, best_source, best_distance
 
-    return False, "UNKNOWN", 0.0, [], "no_snapshot_dependency_match", 999
+    if (
+        fallback_own_path
+        and not requires_downstream_for_dependency
+        and fallback_own_weight > SENSITIVITY_WEIGHT["UNKNOWN"]
+    ):
+        return (
+            True,
+            fallback_own_label,
+            0.55,
+            fallback_own_path,
+            "repo_snapshot_changed_resource_sensitivity_fallback",
+            0,
+        )
 
+    return False, "UNKNOWN", 0.0, [], "repo_snapshot_no_dependency_signal", 999
 
 def _blast_dependency_signal(finding: dict[str, Any]) -> tuple[bool, str, float, list[str], str, int]:
     nodes = _blast_nodes(finding)
