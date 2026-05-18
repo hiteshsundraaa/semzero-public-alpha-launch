@@ -127,3 +127,60 @@ def test_join_cardinality_can_use_property_specific_contract_signal() -> None:
     ]
     assert source == "repo_snapshot_property_specific_contract"
     assert distance == 1
+
+
+from semzero.repo_understanding.causality import _has_change_signal
+
+
+def test_join_cardinality_rejects_enum_only_diff_as_structural_change_signal() -> None:
+    finding = {
+        "family": "join_cardinality",
+        "confidence": "low",
+        "assumption_diff": {
+            "has_explicit_before_after_diff": True,
+            "pattern_type": "join_grain_or_fanout",
+            "removed_context": ["ELSE 'pending'"],
+            "added_context": ["ELSE 'unresolved'"],
+            "evidence_excerpt": "CASE WHEN payment_status = 'completed' THEN 'paid' ELSE 'unresolved' END",
+        },
+        "pattern_detail": {
+            "equality_join": True,
+            "aggregate_after_join": False,
+            "dedup_hint_present": False,
+            "dbt_uniqueness_or_relationship_hint_present": False,
+            "aggregate_after_join_without_uniqueness": False,
+        },
+    }
+
+    present, prop, confidence, source = _has_change_signal(finding)
+
+    assert present is False
+    assert confidence == 0.0
+    assert source == "no_property_specific_structural_change_signal"
+
+
+def test_join_cardinality_accepts_real_join_key_change_signal() -> None:
+    finding = {
+        "family": "join_cardinality",
+        "confidence": "low",
+        "assumption_diff": {
+            "has_explicit_before_after_diff": True,
+            "pattern_type": "join_grain_or_fanout",
+            "removed_context": ["ON o.customer_id = p.customer_id"],
+            "added_context": ["ON o.order_id = p.order_id"],
+            "evidence_excerpt": "LEFT JOIN payments p ON o.order_id = p.order_id",
+        },
+        "pattern_detail": {
+            "equality_join": True,
+            "aggregate_after_join": False,
+            "dedup_hint_present": False,
+            "dbt_uniqueness_or_relationship_hint_present": False,
+            "aggregate_after_join_without_uniqueness": False,
+        },
+    }
+
+    present, prop, confidence, source = _has_change_signal(finding)
+
+    assert present is True
+    assert prop == "join_grain_or_fanout"
+    assert source == "assumption_diff_before_after"

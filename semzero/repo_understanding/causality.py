@@ -104,12 +104,116 @@ def _family(finding: dict[str, Any]) -> str:
     return family
 
 
+
+STRUCTURAL_CHANGE_TERMS = {
+    "join",
+    " on ",
+    "group by",
+    "partition by",
+    "qualify",
+    "row_number",
+    "dense_rank",
+    "rank()",
+    "distinct",
+    "dedup",
+    "unique",
+    "primary key",
+    "primary_key",
+    "foreign key",
+    "foreign_key",
+    "relationship",
+    "customer_id",
+    "order_id",
+    "payment_id",
+    "_id",
+    "_key",
+    "count(",
+    "sum(",
+    "avg(",
+}
+
+
+SEMANTIC_ENUM_TERMS = {
+    "else",
+    "case",
+    "when",
+    "then",
+    "status",
+    "state",
+    "type",
+    "category",
+    "pending",
+    "unresolved",
+    "paid",
+    "completed",
+}
+
+
+def _context_terms(values: object) -> str:
+    if isinstance(values, list):
+        return " ".join(str(v).lower() for v in values)
+    if isinstance(values, dict):
+        return " ".join(str(v).lower() for v in values.values())
+    return str(values or "").lower()
+
+
+def _has_property_specific_structural_change(finding: dict[str, Any]) -> bool:
+    assumption_diff = finding.get("assumption_diff") or {}
+    pattern_detail = finding.get("pattern_detail") or {}
+
+    changed_context = " ".join(
+        [
+            _context_terms(assumption_diff.get("removed_context")),
+            _context_terms(assumption_diff.get("added_context")),
+            _context_terms(assumption_diff.get("evidence_excerpt")),
+            _context_terms(finding.get("evidence_excerpt")),
+        ]
+    )
+
+    has_structural_term = any(term in changed_context for term in STRUCTURAL_CHANGE_TERMS)
+    has_enum_term = any(term in changed_context for term in SEMANTIC_ENUM_TERMS)
+
+    structural_detail_flags = {
+        "aggregate_after_join",
+        "aggregate_after_join_without_uniqueness",
+        "dedup_hint_present",
+        "dbt_uniqueness_or_relationship_hint_present",
+    }
+
+    if any(bool(pattern_detail.get(flag)) for flag in structural_detail_flags):
+        return True
+
+    # Equality join in scanned downstream SQL is not enough by itself. It proves
+    # a join exists, not that this PR changed grain/key/fanout behavior.
+    if pattern_detail.get("equality_join") and has_structural_term and not has_enum_term:
+        return True
+
+    if has_structural_term and not has_enum_term:
+        return True
+
+    return False
+
 def _has_change_signal(finding: dict[str, Any]) -> tuple[bool, str, float, str]:
     family = _family(finding)
     assumption_diff = finding.get("assumption_diff") or {}
     trigger_evidence = finding.get("trigger_evidence") or []
     evidence_excerpt = finding.get("evidence_excerpt") or ""
     confidence = str(finding.get("confidence") or "").lower()
+
+    if _requires_property_specific_dependency(finding):
+        if not _has_property_specific_structural_change(finding):
+            prop = str(
+                assumption_diff.get("pattern_type")
+                or assumption_diff.get("drift_type")
+                or family
+                or "structural_property"
+            )
+            return (
+                False,
+                prop,
+                0.0,
+                "no_property_specific_structural_change_signal",
+            )
 
     if assumption_diff and assumption_diff.get("has_explicit_before_after_diff"):
         conf = 0.85 if confidence == "high" else 0.65 if confidence == "low" else 0.75
@@ -125,7 +229,6 @@ def _has_change_signal(finding: dict[str, Any]) -> tuple[bool, str, float, str]:
         return True, family or "changed_property", conf, "static_evidence_excerpt"
 
     return False, family or "unknown", 0.0, "no_change_signal"
-
 
 def _blast_nodes(finding: dict[str, Any]) -> list[dict[str, Any]]:
     nodes = []
