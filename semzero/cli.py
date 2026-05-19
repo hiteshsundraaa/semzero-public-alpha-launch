@@ -125,6 +125,7 @@ def commands_cmd():
     click.echo("    semzero quickstart Show the shortest first-user path and repo setup hints")
     click.echo("    semzero demo       Run the focused killer demo from a source checkout")
     click.echo("    semzero doctor-assumption-ci Check dbt repo readiness for SemZero CI")
+    click.echo("    semzero baseline-check Verify a clean dbt repo still matches a stored SemZero baseline")
     click.echo("    semzero check     Reuse the best current receipt and summarize risk")
     click.echo("    semzero explain   Explain why the current receipt blocked/warned")
     click.echo("    semzero recheck   Run a fresh high-level validation wrapper")
@@ -294,6 +295,45 @@ def doctor_assumption_ci(repo: str, dbt_manifest: str):
     click.echo()
     if failed:
         raise click.ClickException(f"{failed} required setup check(s) need attention.")
+
+
+@cli.command("baseline-check")
+@click.option("--repo", required=True, help="Clean dbt repository root to check.")
+@click.option(
+    "--baseline-dir",
+    required=True,
+    help="Directory containing the stored clean baseline receipt.json.",
+)
+@click.option("--output", required=True, help="JSON output path for the baseline check result.")
+@click.option(
+    "--priority-tolerance",
+    default=3,
+    show_default=True,
+    type=int,
+    help="Allowed finding priority drift in points.",
+)
+def baseline_check_cmd(repo: str, baseline_dir: str, output: str, priority_tolerance: int):
+    """Verify a clean repo still matches a stored SemZero baseline."""
+    from semzero.repo_understanding.mutation_harness import run_baseline_check
+
+    result = run_baseline_check(
+        repo=repo,
+        baseline_dir=baseline_dir,
+        output=output,
+        priority_tolerance=priority_tolerance,
+    )
+    status = result.get("status")
+    click.echo("\n  SemZero Baseline Check")
+    click.echo(f"  Status: {status}")
+    if result.get("mismatches"):
+        click.echo(f"  Mismatches: {len(result['mismatches'])}")
+        for mismatch in result["mismatches"][:5]:
+            click.echo(f"    - {mismatch}")
+    if result.get("reason"):
+        click.echo(f"  Reason: {result['reason']}")
+    click.echo(f"  Result → {output}\n")
+    if status != "PASS":
+        raise click.ClickException("Clean repo output did not match a valid stored baseline.")
 
 
 @cli.command("init-ci")
@@ -982,6 +1022,12 @@ def repo_index_cmd(dbt_manifest, output, repo, project_dir, criticality_registry
     show_default=True,
     help="Append the PR comment to GITHUB_STEP_SUMMARY when available.",
 )
+@click.option(
+    "--write-shadow-ranking/--no-write-shadow-ranking",
+    default=True,
+    show_default=True,
+    help="Write shadow-only hypothesis ranking artifacts without changing the production PR comment.",
+)
 def assumption_ci(
     dbt_manifest,
     base_ref,
@@ -1000,6 +1046,7 @@ def assumption_ci(
     output_dir,
     strict,
     write_github_summary,
+    write_shadow_ranking,
 ):
     """CI wrapper for the focused dbt Assumption Gate.
 
@@ -1239,6 +1286,22 @@ def assumption_ci(
     else:
         diff_text = _run_git(["git", "diff", f"{effective_base}...HEAD", "--", *dbt_like])
 
+    def _read_changed_sql_pairs(paths: list[str]) -> list[tuple[str, str, str]]:
+        root = Path(project_dir or ".")
+        pairs: list[tuple[str, str, str]] = []
+        for item in paths:
+            if not item.endswith(".sql"):
+                continue
+            after_path = root / item
+            try:
+                after_sql = after_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                after_sql = ""
+            before_sql = _run_git(["git", "show", f"{effective_base}:{item}"])
+            if before_sql or after_sql:
+                pairs.append((item, before_sql, after_sql))
+        return pairs
+
     criticality_payload = load_business_criticality(criticality_registry or None)
 
     try:
@@ -1312,6 +1375,89 @@ def assumption_ci(
     comment_path.write_text(comment, encoding="utf-8")
     changed_path.write_text("\n".join(dbt_like), encoding="utf-8")
     diff_path.write_text(diff_text, encoding="utf-8")
+
+    if write_shadow_ranking:
+        try:
+            from semzero.repo_understanding.hypothesis_ranking import (
+                estimate_rewrite_stats,
+                write_shadow_ranking_artifacts,
+            )
+            from semzero.repo_understanding.sql_semantic_diff import (
+                extract_sql_semantic_events,
+            )
+
+            semantic_events = []
+            rewrite_stats_payloads = []
+            for path, before_sql, after_sql in _read_changed_sql_pairs(dbt_like):
+                events = extract_sql_semantic_events(
+                    before_sql,
+                    after_sql,
+                    model=Path(path).stem,
+                )
+                semantic_events.extend(events)
+                rewrite_stats_payloads.append(
+                    estimate_rewrite_stats(
+                        before_sql,
+                        after_sql,
+                        joins_changed=sum(
+                            1
+                            for event in events
+                            if event.event_type
+                            in {
+                                "join_added",
+                                "join_removed",
+                                "join_type_changed",
+                                "join_key_changed",
+                                "join_target_changed",
+                                "join_predicate_weakened",
+                            }
+                        ),
+                    ).to_dict()
+                )
+
+            aggregate_rewrite_stats: dict[str, Any] = {}
+            if rewrite_stats_payloads:
+                keys = set().union(*(item.keys() for item in rewrite_stats_payloads))
+                aggregate_rewrite_stats = {
+                    key: max(float(item.get(key) or 0.0) for item in rewrite_stats_payloads)
+                    for key in keys
+                }
+                aggregate_rewrite_stats["joins_changed"] = int(
+                    max(int(item.get("joins_changed") or 0) for item in rewrite_stats_payloads)
+                )
+
+            repo_snapshot_payload = None
+            repo_snapshot_path = out / "repo_snapshot.json"
+            if repo_snapshot_path.exists():
+                repo_snapshot_payload = json.loads(
+                    repo_snapshot_path.read_text(encoding="utf-8")
+                )
+
+            shadow = write_shadow_ranking_artifacts(
+                out,
+                payload,
+                comment,
+                semantic_events,
+                repo_snapshot_payload,
+                rewrite_stats=aggregate_rewrite_stats or None,
+            )
+            click.echo(
+                "  Shadow ranking: "
+                f"{shadow['shadow_hypothesis_receipt'].get('analysis_outcome')} "
+                f"primary={shadow['shadow_hypothesis_receipt'].get('primary_family') or 'none'}"
+            )
+        except Exception as exc:
+            shadow_error = {
+                "kind": "semzero_shadow_hypothesis_error_v1",
+                "shadow_only": True,
+                "status": "SHADOW_RANKING_ERROR",
+                "message": str(exc),
+            }
+            (out / "shadow_hypothesis_receipt.error.json").write_text(
+                json.dumps(shadow_error, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            click.echo(f"  Shadow ranking: failed ({exc})")
 
     summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
     if write_github_summary and summary_file:

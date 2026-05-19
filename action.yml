@@ -34,6 +34,10 @@ inputs:
     description: "Post or update the sticky SemZero PR comment."
     required: false
     default: "true"
+  write-shadow-ranking:
+    description: "Write shadow-only hypothesis ranking artifacts without changing the production PR comment."
+    required: false
+    default: "true"
   python-version:
     description: "Python version used to run SemZero."
     required: false
@@ -168,6 +172,10 @@ runs:
         if [ -f "${{ inputs.manifest-path }}" ]; then
           manifest_flag="--dbt-manifest ${{ inputs.manifest-path }}"
         fi
+        shadow_ranking_flag="--write-shadow-ranking"
+        if [ "${{ inputs.write-shadow-ranking }}" != "true" ]; then
+          shadow_ranking_flag="--no-write-shadow-ranking"
+        fi
         optional_flags=""
         # Current SemZero alpha CLI does not yet expose --policy on assumption-ci.
         # The action keeps policy-path as an input for the future public contract,
@@ -178,6 +186,7 @@ runs:
           --changed-files "$changed_files_arg" \
           --output-dir "${{ inputs.artifact-dir }}" \
           --mode "${{ inputs.mode }}" \
+          $shadow_ranking_flag \
           $manifest_flag \
           $optional_flags
 
