@@ -18,6 +18,10 @@ inputs:
     description: "Where SemZero writes comment/evidence artifacts."
     required: false
     default: "data/semzero_assumption_gate"
+  base-ref:
+    description: "Optional base branch/ref for changed-file discovery. Defaults to the PR base or main."
+    required: false
+    default: ""
   extra-pip-packages:
     description: "Optional dbt packages/adapters, e.g. 'dbt-core dbt-duckdb' or 'dbt-core dbt-snowflake'."
     required: false
@@ -143,7 +147,11 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        base_branch="${GITHUB_BASE_REF:-main}"
+        base_branch="${{ inputs.base-ref }}"
+        if [ -z "$base_branch" ]; then
+          base_branch="${GITHUB_BASE_REF:-main}"
+        fi
+        base_branch="${base_branch#origin/}"
         base_ref="origin/${base_branch}"
 
         echo "SemZero: fetching base ref ${base_ref}"

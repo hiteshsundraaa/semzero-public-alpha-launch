@@ -47,3 +47,12 @@ def test_packaged_composite_action_exposes_same_core_evidence_inputs():
     assert "exceptions-file" in action
     assert "--write-github-summary" in action
     assert "--no-write-github-summary" in action
+
+
+def test_public_action_exposes_base_ref_and_shadow_ranking_controls():
+    action = Path("action.yml").read_text(encoding="utf-8")
+    assert "base-ref" in action
+    assert "write-shadow-ranking" in action
+    assert "base_branch=\"${{ inputs.base-ref }}\"" in action
+    assert "--write-shadow-ranking" in action
+    assert "--no-write-shadow-ranking" in action
