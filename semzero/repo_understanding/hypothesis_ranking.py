@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import re
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,13 @@ def rank_hypotheses(
     stats = _rewrite_stats_from_any(rewrite_stats)
     circuit_breaker = _massive_rewrite_reason(stats)
     normalized_findings = [_finding_dict(finding) for finding in findings]
+    normalized_findings = _augment_with_event_backed_findings(
+        normalized_findings,
+        events,
+        repo_snapshot,
+    )
+    if circuit_breaker and _single_schema_column_removal(events):
+        circuit_breaker = ""
 
     if circuit_breaker:
         families_present = _families_present(normalized_findings, events)
@@ -490,6 +498,130 @@ def estimate_rewrite_stats(
         joins_changed=joins_changed,
         model_length_ratio=length_ratio,
     )
+
+
+def _augment_with_event_backed_findings(
+    findings: list[dict[str, Any]],
+    events: list[SemanticDiffEvent],
+    repo_snapshot: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    families = {_family(finding) for finding in findings}
+    additions: list[dict[str, Any]] = []
+    for event in events:
+        if event.event_type != "selected_column_removed":
+            continue
+        if "schema_contract_break" in families:
+            continue
+        removed_column = _removed_column_alias(event)
+        if not removed_column:
+            continue
+        model = _snapshot_model_for_event(repo_snapshot, event)
+        references = [
+            ref
+            for ref in (model.get("downstream_column_references") or [])
+            if str(ref.get("column") or "").lower() == removed_column.lower()
+        ]
+        if not references:
+            continue
+        additions.append(_schema_break_finding_from_event(event, model, removed_column, references))
+        families.add("schema_contract_break")
+    return findings + additions
+
+
+def _single_schema_column_removal(events: list[SemanticDiffEvent]) -> bool:
+    schema_events = [
+        event for event in events if event.event_type == "selected_column_removed"
+    ]
+    return bool(schema_events) and len(events) <= 2
+
+
+def _removed_column_alias(event: SemanticDiffEvent) -> str:
+    before = str(event.before or event.raw_excerpt or "")
+    alias = re.search(r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", before, flags=re.I)
+    if alias:
+        return alias.group(1)
+    simple = re.search(r"(?:^|\.)([A-Za-z_][A-Za-z0-9_]*)\s*$", before.strip())
+    return simple.group(1) if simple else ""
+
+
+def _snapshot_model_for_event(
+    repo_snapshot: dict[str, Any] | None, event: SemanticDiffEvent
+) -> dict[str, Any]:
+    models = (repo_snapshot or {}).get("models") or {}
+    event_model = event.model.lower()
+    for model in models.values():
+        if str(model.get("name") or "").lower() == event_model:
+            return model
+    return {}
+
+
+def _schema_break_finding_from_event(
+    event: SemanticDiffEvent,
+    model: dict[str, Any],
+    removed_column: str,
+    references: list[dict[str, Any]],
+) -> dict[str, Any]:
+    seed = f"{model.get('unique_id')}:{removed_column}:{event.event_type}"
+    stable = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10].upper()
+    highest = _highest_sensitivity(ref.get("sensitivity") for ref in references)
+    return {
+        "id": f"AG-SCHEMA-CONTRACT-BREAK-{stable}",
+        "stable_id": f"AG-SCHEMA-CONTRACT-BREAK-{stable}",
+        "family": "schema_contract_break",
+        "severity": "high",
+        "confidence": "high",
+        "source_resource": model.get("unique_id") or event.model,
+        "source_path": model.get("path") or "",
+        "assumption": f"Downstream models can still select `{removed_column}` from `{event.model}`.",
+        "why_it_matters": (
+            "A selected output column was removed while downstream SQL still references it."
+        ),
+        "recommended_check": (
+            f"Update downstream references to `{removed_column}` or restore the column before merge."
+        ),
+        "trigger_evidence": [
+            f"{event.event_type}: {removed_column}",
+            *[
+                f"{ref.get('downstream_name') or ref.get('downstream_model')} references {removed_column}"
+                for ref in references[:4]
+            ],
+        ],
+        "blast_radius": [
+            {
+                "node_type": ref.get("resource_type") or "dbt_model",
+                "name": ref.get("downstream_name") or ref.get("downstream_model"),
+                "unique_id": ref.get("downstream_model"),
+                "path": ref.get("downstream_path"),
+                "business_severity": ref.get("sensitivity") or "UNKNOWN",
+            }
+            for ref in references
+        ],
+        "business_impact": {
+            "highest_business_severity": highest,
+        },
+        "replay_fidelity": {
+            "score": max(event.fidelity, 0.70),
+        },
+        "shadow_generated": True,
+    }
+
+
+def _highest_sensitivity(labels: Any) -> str:
+    order = {
+        "BOARD_CRITICAL": 6,
+        "EXEC_CRITICAL": 5,
+        "REVENUE_CRITICAL": 4,
+        "CUSTOMER_FACING": 3,
+        "OPERATIONAL": 2,
+        "ANALYTICAL": 1,
+        "UNKNOWN": 0,
+    }
+    best = "UNKNOWN"
+    for label in labels:
+        normalized = str(label or "UNKNOWN").upper()
+        if order.get(normalized, 0) > order.get(best, 0):
+            best = normalized
+    return best
 
 
 def _event_from_any(event: SemanticDiffEvent | dict[str, Any]) -> SemanticDiffEvent:

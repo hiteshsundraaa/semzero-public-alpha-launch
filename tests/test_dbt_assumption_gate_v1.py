@@ -360,8 +360,8 @@ def test_repo_snapshot_indexes_models_and_inferred_contracts(tmp_path):
                 "name": "mart_order_payments",
                 "original_file_path": "models/marts/mart_order_payments.sql",
                 "depends_on": {"nodes": ["model.test.int_payment_summary"]},
-                "raw_code": "select * from int_payment_summary",
-                "compiled_code": "select * from int_payment_summary",
+                "raw_code": "select p.final_payment_status from int_payment_summary p",
+                "compiled_code": "select p.final_payment_status from int_payment_summary p",
                 "columns": {},
                 "config": {"materialized": "table"},
                 "meta": {},
@@ -419,6 +419,17 @@ def test_repo_snapshot_indexes_models_and_inferred_contracts(tmp_path):
     assert model["columns"]["customer_id"]["inferred_required"] is True
     assert model["columns"]["customer_id"]["inferred_unique"] is True
     assert model["columns"]["final_payment_status"]["accepted_values"] == ["paid", "pending"]
+    assert "final_payment_status" in model["selected_columns"]
+    assert {
+        "column": "final_payment_status",
+        "downstream_model": "model.test.mart_order_payments",
+        "downstream_name": "mart_order_payments",
+        "downstream_path": "models/marts/mart_order_payments.sql",
+        "resource_type": "model",
+        "sensitivity": "REVENUE_CRITICAL",
+        "sensitivity_source": "inferred_pattern",
+        "source": "downstream_sql_reference",
+    } in model["downstream_column_references"]
     assert "customer_id" in model["primary_key_candidates"]
     assert "customer_id" in model["grain_candidates"]
     assert model["downstream_count"] >= 1

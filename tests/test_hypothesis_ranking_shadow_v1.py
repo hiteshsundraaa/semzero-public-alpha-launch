@@ -156,6 +156,54 @@ def test_grain_group_by_decomposition_includes_events_and_dependency_discounts()
     assert decomposition["final_score"] == hypothesis["rank_score"]
 
 
+def test_selected_column_removed_generates_schema_candidate_only_with_downstream_reference():
+    event = SemanticDiffEvent(
+        event_type="selected_column_removed",
+        family_hint="schema_contract_break",
+        model="int_payment_summary",
+        before="CASE WHEN true THEN 'paid' END AS final_payment_status",
+        after=None,
+        changed_columns=("final_payment_status",),
+        clause="SELECT",
+        confidence=0.88,
+        fidelity=0.70,
+        source="clause_text_diff",
+    )
+    snapshot = {
+        "models": {
+            "model.test.int_payment_summary": {
+                "unique_id": "model.test.int_payment_summary",
+                "name": "int_payment_summary",
+                "path": "models/intermediate/int_payment_summary.sql",
+                "downstream_column_references": [
+                    {
+                        "column": "final_payment_status",
+                        "downstream_model": "model.test.mart_order_payments",
+                        "downstream_name": "mart_order_payments",
+                        "downstream_path": "models/marts/mart_order_payments.sql",
+                        "resource_type": "model",
+                        "sensitivity": "REVENUE_CRITICAL",
+                    }
+                ],
+            }
+        }
+    }
+
+    payload = rank_hypotheses([], [event], snapshot)
+
+    assert payload["analysis_outcome"] == "ranked"
+    assert payload["primary_family"] == "schema_contract_break"
+    primary = payload["ranked_hypotheses"][0]
+    assert primary["role"] == "primary"
+    assert primary["source_resource"] == "model.test.int_payment_summary"
+    assert primary["score_decomposition"]["change_specificity"]["evidence"][0][
+        "event_type"
+    ] == "selected_column_removed"
+
+    quiet = rank_hypotheses([], [event], {"models": {}})
+    assert quiet["analysis_outcome"] == "silent_pass"
+
+
 def test_formatting_only_change_produces_silent_pass_no_primary():
     payload = rank_hypotheses(
         [_finding("enum_domain_closure", stable_id="AG-ENUM", blast=False)],

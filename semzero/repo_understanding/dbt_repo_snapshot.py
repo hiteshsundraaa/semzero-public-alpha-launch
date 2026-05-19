@@ -73,6 +73,12 @@ def _resource_columns(resource: dict[str, Any]) -> dict[str, Any]:
     return cols if isinstance(cols, dict) else {}
 
 
+def _resource_sql(resource: dict[str, Any]) -> tuple[str, str]:
+    raw = str(resource.get("raw_code") or resource.get("raw_sql") or "")
+    compiled = str(resource.get("compiled_code") or resource.get("compiled_sql") or "")
+    return raw, compiled
+
+
 def _column_tests_from_column_meta(column_meta: dict[str, Any]) -> list[str]:
     tests = []
     raw_tests = column_meta.get("tests") or column_meta.get("data_tests") or []
@@ -208,6 +214,98 @@ def _build_children(resources: dict[str, dict[str, Any]]) -> dict[str, list[str]
             if parent in children:
                 children[parent].append(uid)
     return {key: sorted(set(value)) for key, value in children.items()}
+
+
+def _split_select_expressions(clause: str) -> list[str]:
+    expressions: list[str] = []
+    current: list[str] = []
+    depth = 0
+    quote: str | None = None
+    for char in clause:
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        if char == "," and depth == 0:
+            expression = "".join(current).strip()
+            if expression:
+                expressions.append(expression)
+            current = []
+            continue
+        current.append(char)
+    expression = "".join(current).strip()
+    if expression:
+        expressions.append(expression)
+    return expressions
+
+
+def _selected_columns_from_sql(sql: str) -> list[str]:
+    match = re.search(r"\bselect\b(.*?)\bfrom\b", sql or "", flags=re.I | re.S)
+    if not match:
+        return []
+    columns: list[str] = []
+    for expression in _split_select_expressions(match.group(1)):
+        alias_match = re.search(
+            r"\bas\s+([A-Za-z_][A-Za-z0-9_]*)\s*$",
+            expression,
+            flags=re.I,
+        )
+        if alias_match:
+            columns.append(alias_match.group(1))
+            continue
+        plain = re.search(r"(?:^|\.)([A-Za-z_][A-Za-z0-9_]*)\s*$", expression.strip())
+        if plain and plain.group(1) != "*":
+            columns.append(plain.group(1))
+    return sorted(set(columns))
+
+
+def _downstream_column_references(
+    model_uid: str,
+    selected_columns: list[str],
+    children: dict[str, list[str]],
+    resources: dict[str, dict[str, Any]],
+    sensitivity_by_uid: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    references: list[dict[str, Any]] = []
+    if not selected_columns:
+        return references
+    for child_uid in children.get(model_uid, []):
+        child = resources.get(child_uid) or {}
+        raw_sql, compiled_sql = _resource_sql(child)
+        search_sql = f"{raw_sql}\n{compiled_sql}"
+        for column in selected_columns:
+            pattern = re.compile(rf"(?:\.\s*|\b){re.escape(column)}\b", flags=re.I)
+            if not pattern.search(search_sql):
+                continue
+            sensitivity = sensitivity_by_uid.get(child_uid, {"label": "UNKNOWN", "source": "unknown"})
+            references.append(
+                {
+                    "column": column,
+                    "downstream_model": child_uid,
+                    "downstream_name": _resource_name(child),
+                    "downstream_path": _resource_path(child),
+                    "resource_type": str(child.get("resource_type") or ""),
+                    "sensitivity": sensitivity.get("label", "UNKNOWN"),
+                    "sensitivity_source": sensitivity.get("source", "unknown"),
+                    "source": "downstream_sql_reference",
+                }
+            )
+    return sorted(
+        references,
+        key=lambda item: (
+            str(item.get("column")),
+            str(item.get("downstream_model")),
+        ),
+    )
 
 
 def _shortest_downstream(
@@ -398,6 +496,15 @@ def build_dbt_repo_snapshot(
         )
         downstream = _shortest_downstream(uid, children, resources, sensitivity_by_uid)
         sensitivity = sensitivity_by_uid.get(uid, {"label": "UNKNOWN", "source": "unknown"})
+        raw_sql, compiled_sql = _resource_sql(model)
+        selected_columns = _selected_columns_from_sql(compiled_sql or raw_sql)
+        downstream_column_refs = _downstream_column_references(
+            uid,
+            selected_columns,
+            children,
+            resources,
+            sensitivity_by_uid,
+        )
 
         for contract in contracts:
             dependency_contracts.append(
@@ -425,6 +532,8 @@ def build_dbt_repo_snapshot(
             "sensitivity": sensitivity,
             "test_count": len(tests_by_parent.get(uid, [])),
             "contracts": contracts,
+            "selected_columns": selected_columns,
+            "downstream_column_references": downstream_column_refs,
         }
 
     snapshot = {
