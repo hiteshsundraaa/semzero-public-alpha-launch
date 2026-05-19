@@ -61,6 +61,70 @@ class MutationClassification:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class SmokeScenario:
+    scenario: str
+    expected_primary_families: tuple[str, ...] = ()
+    expected_routing: str = ""
+    should_be_silent: bool = False
+    allowed_advisory_families: tuple[str, ...] = ()
+    forbidden_must_review_families: tuple[str, ...] = ()
+    expected_semantic_events: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scenario": self.scenario,
+            "expected_primary_families": list(self.expected_primary_families),
+            "expected_routing": self.expected_routing,
+            "should_be_silent": self.should_be_silent,
+            "allowed_advisory_families": list(self.allowed_advisory_families),
+            "forbidden_must_review_families": list(self.forbidden_must_review_families),
+            "expected_semantic_events": list(self.expected_semantic_events),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SmokeSummary:
+    scenario: str
+    expected_primary: list[str]
+    expected_routing: str
+    expected_silence: bool
+    actual_primary: str | None
+    actual_primary_score: float
+    actual_routing: str
+    semantic_events: list[str]
+    must_review_count: int
+    advisory_count: int
+    suppressed_count: int
+    silent_pass: bool
+    compile_status: str
+    changed_file_count: int
+    changed_files: list[str]
+    result: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scenario": self.scenario,
+            "expected_primary": self.expected_primary,
+            "expected_routing": self.expected_routing,
+            "expected_silence": self.expected_silence,
+            "actual_primary": self.actual_primary,
+            "actual_primary_score": self.actual_primary_score,
+            "actual_routing": self.actual_routing,
+            "semantic_events": self.semantic_events,
+            "must_review_count": self.must_review_count,
+            "advisory_count": self.advisory_count,
+            "suppressed_count": self.suppressed_count,
+            "silent_pass": self.silent_pass,
+            "compile_status": self.compile_status,
+            "changed_file_count": self.changed_file_count,
+            "changed_files": self.changed_files,
+            "result": self.result,
+            "reason": self.reason,
+        }
+
+
 SCENARIOS: dict[str, MutationScenario] = {
     "enum_default_change": MutationScenario(
         scenario_id="enum_default_change",
@@ -178,6 +242,64 @@ SCENARIOS: dict[str, MutationScenario] = {
             expected_routing=("silent_pass",),
             expect_silent_pass=True,
         ),
+    ),
+}
+
+
+SMOKE_SCENARIOS: dict[str, SmokeScenario] = {
+    "enum_default_change": SmokeScenario(
+        scenario="enum_default_change",
+        expected_primary_families=("enum_domain_closure",),
+        expected_routing="must_review",
+        allowed_advisory_families=("join_cardinality",),
+        expected_semantic_events=("case_else_changed",),
+    ),
+    "grain_group_by_change": SmokeScenario(
+        scenario="grain_group_by_change",
+        expected_primary_families=(
+            "grain_contract_drift",
+            "join_cardinality",
+            "join_relationship_drift",
+        ),
+        expected_routing="must_review",
+        allowed_advisory_families=("enum_domain_closure",),
+        expected_semantic_events=("group_by_key_added", "group_by_key_removed"),
+    ),
+    "format_only_change": SmokeScenario(
+        scenario="format_only_change",
+        expected_routing="silent_pass",
+        should_be_silent=True,
+        forbidden_must_review_families=("*",),
+    ),
+    "column_remove_used": SmokeScenario(
+        scenario="column_remove_used",
+        expected_primary_families=("schema_contract_break", "required_column_removed"),
+        expected_routing="must_review",
+        expected_semantic_events=("selected_column_removed",),
+    ),
+    "column_remove_unused": SmokeScenario(
+        scenario="column_remove_unused",
+        expected_routing="advisory_or_silent",
+        forbidden_must_review_families=("schema_contract_break", "required_column_removed"),
+        expected_semantic_events=("selected_column_removed",),
+    ),
+    "join_key_change": SmokeScenario(
+        scenario="join_key_change",
+        expected_primary_families=("join_relationship_drift", "join_cardinality"),
+        expected_routing="must_review",
+        expected_semantic_events=("join_key_changed",),
+    ),
+    "metric_formula_change": SmokeScenario(
+        scenario="metric_formula_change",
+        expected_primary_families=("metric_semantics_drift", "metric_formula_changed"),
+        expected_routing="must_review_or_advisory",
+        expected_semantic_events=("aggregate_argument_changed", "arithmetic_expression_changed"),
+    ),
+    "filter_semantic_change": SmokeScenario(
+        scenario="filter_semantic_change",
+        expected_primary_families=("filter_population_drift", "enum_domain_closure"),
+        expected_routing="must_review_or_advisory",
+        expected_semantic_events=("where_predicate_changed", "status_population_changed"),
     ),
 }
 
@@ -310,6 +432,199 @@ def build_mutation_summary_markdown(
             )
         )
     return "\n".join(lines)
+
+
+def summarize_smoke_artifacts(
+    artifact_dir: str | Path,
+    *,
+    scenario: str,
+    expected_changed_file_count: int = 1,
+) -> SmokeSummary:
+    root = Path(artifact_dir)
+    smoke = SMOKE_SCENARIOS[scenario]
+    changed_files = _read_lines(root / "changed_files.debug.txt")
+    compile_payload = _read_json(root / "dbt_compile.status.json")
+    receipt = _read_json(root / "receipt.json")
+    shadow = _read_json(root / "shadow_hypothesis_receipt.json")
+    comparison = _read_json(root / "ranking_comparison.json")
+
+    ranked = list(shadow.get("ranked_hypotheses") or [])
+    primary = next((item for item in ranked if item.get("role") == "primary"), None)
+    actual_primary = primary.get("family") if primary else None
+    actual_primary_score = round(float((primary or {}).get("rank_score") or 0.0), 4)
+    semantic_events = list(
+        shadow.get("semantic_event_types")
+        or comparison.get("semantic_events")
+        or []
+    )
+    silent_pass = bool(
+        shadow.get("analysis_outcome") == "silent_pass"
+        or comparison.get("silent_pass")
+        or comparison.get("silent_pass_triggered")
+    )
+    must_review_count = int(
+        comparison.get("new_must_review_count")
+        if comparison.get("new_must_review_count") is not None
+        else (shadow.get("summary") or {}).get("primary_count") or 0
+    )
+    advisory_count = int(
+        comparison.get("new_advisory_count")
+        if comparison.get("new_advisory_count") is not None
+        else (shadow.get("summary") or {}).get("advisory_count") or 0
+    )
+    suppressed_count = int(
+        comparison.get("suppressed_count")
+        if comparison.get("suppressed_count") is not None
+        else (shadow.get("summary") or {}).get("suppressed_count") or 0
+    )
+    compile_status = str(compile_payload.get("status") or "MISSING")
+    actual_routing = _smoke_routing(
+        compile_status=compile_status,
+        receipt=receipt,
+        silent_pass=silent_pass,
+        must_review_count=must_review_count,
+        advisory_count=advisory_count,
+    )
+    result, reason = classify_smoke_summary_values(
+        smoke,
+        actual_primary=actual_primary,
+        actual_routing=actual_routing,
+        semantic_events=semantic_events,
+        must_review_count=must_review_count,
+        advisory_count=advisory_count,
+        silent_pass=silent_pass,
+        compile_status=compile_status,
+        changed_file_count=len(changed_files),
+        expected_changed_file_count=expected_changed_file_count,
+        ranked_hypotheses=ranked,
+    )
+    return SmokeSummary(
+        scenario=scenario,
+        expected_primary=list(smoke.expected_primary_families),
+        expected_routing=smoke.expected_routing,
+        expected_silence=smoke.should_be_silent,
+        actual_primary=actual_primary,
+        actual_primary_score=actual_primary_score,
+        actual_routing=actual_routing,
+        semantic_events=semantic_events,
+        must_review_count=must_review_count,
+        advisory_count=advisory_count,
+        suppressed_count=suppressed_count,
+        silent_pass=silent_pass,
+        compile_status=compile_status,
+        changed_file_count=len(changed_files),
+        changed_files=changed_files,
+        result=result,
+        reason=reason,
+    )
+
+
+def classify_smoke_summary_values(
+    smoke: SmokeScenario,
+    *,
+    actual_primary: str | None,
+    actual_routing: str,
+    semantic_events: list[str],
+    must_review_count: int,
+    advisory_count: int,
+    silent_pass: bool,
+    compile_status: str,
+    changed_file_count: int,
+    expected_changed_file_count: int = 1,
+    ranked_hypotheses: list[dict[str, Any]] | None = None,
+) -> tuple[str, str]:
+    clean_scope = changed_file_count == expected_changed_file_count
+    compile_ok = compile_status == "COMPLETE"
+    compile_schema_break = actual_routing == "compile_schema_break"
+    expected_events_present = all(
+        event in semantic_events for event in smoke.expected_semantic_events
+    )
+    primary_ok = (
+        not smoke.expected_primary_families
+        or (actual_primary in smoke.expected_primary_families)
+    )
+    routing_ok = _expected_routing_matches(smoke.expected_routing, actual_routing)
+    forbidden_promoted = _forbidden_must_review_present(
+        smoke.forbidden_must_review_families,
+        ranked_hypotheses or [],
+        must_review_count=must_review_count,
+    )
+
+    if smoke.should_be_silent:
+        if not clean_scope:
+            return RESULT_FAIL, "changed_file_count != 1 for clean smoke branch"
+        if must_review_count > 0 or actual_primary:
+            return RESULT_FAIL, "format-only change produced must_review or forced primary"
+        if not compile_ok:
+            return RESULT_FAIL, "format-only compile did not complete"
+        return RESULT_PASS, "format-only change stayed quiet"
+
+    if not clean_scope:
+        return RESULT_PARTIAL, "changed_file_count != 1; smoke branch scope is polluted"
+    if forbidden_promoted:
+        return RESULT_FAIL, "forbidden family promoted to must_review"
+    if not compile_ok:
+        if smoke.expected_primary_families and compile_schema_break:
+            return RESULT_PARTIAL, "compile failed with honest schema-break classification"
+        return RESULT_FAIL, "dbt compile absent or failed without honest classification"
+    if smoke.expected_routing == "advisory_or_silent":
+        if actual_routing in {"advisory", "silent_pass", "allow"} and must_review_count == 0:
+            return RESULT_PASS, "unused/local change did not become must_review"
+        return RESULT_FAIL, "unused/local change produced must_review"
+    if primary_ok and routing_ok and expected_events_present:
+        return RESULT_PASS, "expected primary, routing, and semantic events matched"
+    if expected_events_present and routing_ok:
+        return RESULT_PARTIAL, "semantic event and routing matched, but primary was less precise"
+    if primary_ok and expected_events_present:
+        return RESULT_PARTIAL, "expected family found but routing was weaker than expected"
+    if actual_routing == "silent_pass":
+        return RESULT_FAIL, "risky mutation stayed quiet"
+    return RESULT_FAIL, "wrong family, routing, or semantic event"
+
+
+def write_smoke_summary_artifacts(
+    artifact_dir: str | Path,
+    *,
+    scenario: str,
+    output_dir: str | Path | None = None,
+    expected_changed_file_count: int = 1,
+) -> dict[str, Any]:
+    summary = summarize_smoke_artifacts(
+        artifact_dir,
+        scenario=scenario,
+        expected_changed_file_count=expected_changed_file_count,
+    )
+    root = Path(output_dir) if output_dir else Path(artifact_dir)
+    payload = {
+        "kind": "semzero_smoke_summary_v1",
+        "summary": summary.to_dict(),
+    }
+    markdown = render_smoke_summary_markdown([summary])
+    _write_json(root / "smoke_summary.json", payload)
+    (root / "smoke_summary.md").write_text(markdown, encoding="utf-8")
+    return {"smoke_summary": payload, "markdown": markdown}
+
+
+def render_smoke_summary_markdown(summaries: list[SmokeSummary]) -> str:
+    lines = [
+        "| Scenario | Expected Primary | Actual Primary | Routing | Events | Changed Files | Compile | Result | Reason |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for item in summaries:
+        lines.append(
+            "| {scenario} | {expected} | {actual} | {routing} | {events} | {changed} | {compile} | {result} | {reason} |".format(
+                scenario=item.scenario,
+                expected=", ".join(item.expected_primary) or "none",
+                actual=item.actual_primary or "none",
+                routing=item.actual_routing,
+                events=", ".join(item.semantic_events) or "none",
+                changed=item.changed_file_count,
+                compile=item.compile_status,
+                result=item.result,
+                reason=item.reason,
+            )
+        )
+    return "\n".join(lines) + "\n"
 
 
 def normalize_receipt_for_baseline(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -452,6 +767,72 @@ def _routing_from_actual(actual: dict[str, Any]) -> str:
     if actual.get("advisory_families"):
         return "advisory"
     return str(actual.get("verdict") or "").lower()
+
+
+def _smoke_routing(
+    *,
+    compile_status: str,
+    receipt: dict[str, Any],
+    silent_pass: bool,
+    must_review_count: int,
+    advisory_count: int,
+) -> str:
+    verdict = str(receipt.get("verdict") or "").upper()
+    analysis = (receipt.get("summary") or {}).get("analysis_status") or {}
+    reason = str(analysis.get("reason") or "").lower()
+    if compile_status not in {"COMPLETE", "MISSING"} and (
+        "compile" in reason or "schema" in reason or verdict == "CONFIG_ERROR"
+    ):
+        return "compile_schema_break"
+    if silent_pass:
+        return "silent_pass"
+    if must_review_count > 0:
+        return "must_review"
+    if advisory_count > 0:
+        return "advisory"
+    if verdict == "ALLOW":
+        return "allow"
+    return verdict.lower() or "unknown"
+
+
+def _expected_routing_matches(expected: str, actual: str) -> bool:
+    if expected == actual:
+        return True
+    if expected == "must_review_or_advisory":
+        return actual in {"must_review", "advisory"}
+    if expected == "advisory_or_silent":
+        return actual in {"advisory", "silent_pass", "allow"}
+    return False
+
+
+def _forbidden_must_review_present(
+    forbidden: tuple[str, ...],
+    ranked_hypotheses: list[dict[str, Any]],
+    *,
+    must_review_count: int,
+) -> bool:
+    if not forbidden:
+        return False
+    if "*" in forbidden:
+        return must_review_count > 0
+    primary_or_secondary = {
+        str(item.get("family"))
+        for item in ranked_hypotheses
+        if item.get("role") in {"primary", "secondary"}
+    }
+    return bool(primary_or_secondary.intersection(forbidden))
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _signal_matches(expected: MutationExpectation, actual: dict[str, Any]) -> bool:

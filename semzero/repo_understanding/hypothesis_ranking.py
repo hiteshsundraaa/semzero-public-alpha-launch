@@ -80,14 +80,30 @@ def rank_hypotheses(
         families_present = _families_present(normalized_findings, events)
         ranked = []
         for finding in normalized_findings:
+            family = _family(finding)
+            dependency = _dependency_score(finding, repo_snapshot)
+            fidelity = _finding_fidelity(finding, events)
+            actionability = _actionability(finding)
             ranked.append(
                 {
                     **_base_rank_payload(finding),
                     "change_specificity": 0.0,
-                    "dependency_score": _dependency_score(finding, repo_snapshot),
-                    "evidence_fidelity": _finding_fidelity(finding, events),
-                    "actionability": _actionability(finding),
+                    "dependency_score": dependency,
+                    "evidence_fidelity": fidelity,
+                    "actionability": actionability,
                     "rank_score": 0.0,
+                    "score_decomposition": _score_decomposition(
+                        finding=finding,
+                        family=family,
+                        supporting_events=[],
+                        change_specificity=0.0,
+                        dependency_score=dependency,
+                        evidence_fidelity=fidelity,
+                        actionability=actionability,
+                        final_score=0.0,
+                        formula="suppressed_by_massive_rewrite_circuit_breaker",
+                        final_discounts=["massive_rewrite_circuit_breaker"],
+                    ),
                     "role": "suppressed",
                     "suppression_reason": "massive_rewrite_circuit_breaker",
                     "supporting_event_types": [],
@@ -131,10 +147,14 @@ def rank_hypotheses(
             evidence_fidelity=fidelity,
             actionability=actionability,
         )
+        formula = "weighted_sum"
+        final_discounts: list[str] = []
         if not change_specificity:
             # Dependency context without a property-specific change event should
             # never outrank a direct semantic trigger.
             rank_score = min(rank_score, 0.34)
+            formula = "min(weighted_sum, dependency_context_without_semantic_change_event_cap)"
+            final_discounts.append("dependency_context_without_semantic_change_event_cap")
         ranked.append(
             {
                 **_base_rank_payload(finding),
@@ -143,6 +163,18 @@ def rank_hypotheses(
                 "evidence_fidelity": round(fidelity, 4),
                 "actionability": round(actionability, 4),
                 "rank_score": round(rank_score, 4),
+                "score_decomposition": _score_decomposition(
+                    finding=finding,
+                    family=family,
+                    supporting_events=supporting,
+                    change_specificity=change_specificity,
+                    dependency_score=dependency,
+                    evidence_fidelity=fidelity,
+                    actionability=actionability,
+                    final_score=rank_score,
+                    formula=formula,
+                    final_discounts=final_discounts,
+                ),
                 "activation_floor": _family_activation_floor(family, activation_threshold),
                 "role": "candidate",
                 "suppression_reason": "",
@@ -560,6 +592,144 @@ def _actionability(finding: dict[str, Any]) -> float:
     if finding.get("trigger_evidence"):
         score += 0.10
     return min(score, 1.0)
+
+
+def _score_decomposition(
+    *,
+    finding: dict[str, Any],
+    family: str,
+    supporting_events: list[SemanticDiffEvent],
+    change_specificity: float,
+    dependency_score: float,
+    evidence_fidelity: float,
+    actionability: float,
+    final_score: float,
+    formula: str,
+    final_discounts: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "change_specificity": {
+            "score": round(change_specificity, 4),
+            "weight": WEIGHT_CHANGE_SPECIFICITY,
+            "weighted": round(change_specificity * WEIGHT_CHANGE_SPECIFICITY, 4),
+            "evidence": [_event_evidence(event) for event in supporting_events],
+            "discounts": [] if supporting_events else ["no_property_specific_semantic_event"],
+        },
+        "dependency_score": {
+            "score": round(dependency_score, 4),
+            "weight": WEIGHT_DEPENDENCY_SCORE,
+            "weighted": round(dependency_score * WEIGHT_DEPENDENCY_SCORE, 4),
+            "evidence": _dependency_evidence(finding),
+            "discounts": _dependency_discounts(finding, family),
+        },
+        "evidence_fidelity": {
+            "score": round(evidence_fidelity, 4),
+            "weight": WEIGHT_EVIDENCE_FIDELITY,
+            "weighted": round(evidence_fidelity * WEIGHT_EVIDENCE_FIDELITY, 4),
+            "evidence": _fidelity_evidence(supporting_events, finding),
+            "discounts": _fidelity_discounts(finding),
+        },
+        "actionability": {
+            "score": round(actionability, 4),
+            "weight": WEIGHT_ACTIONABILITY,
+            "weighted": round(actionability * WEIGHT_ACTIONABILITY, 4),
+            "evidence": _actionability_evidence(finding),
+            "discounts": _actionability_discounts(finding),
+            "recommended_check": finding.get("recommended_check") or "",
+        },
+        "severity_potential": 1.0,
+        "final_formula": formula,
+        "final_discounts": final_discounts or [],
+        "final_score": round(final_score, 4),
+    }
+
+
+def _event_evidence(event: SemanticDiffEvent) -> dict[str, Any]:
+    return {
+        "event_type": event.event_type,
+        "family_hint": event.family_hint,
+        "source": event.source,
+        "confidence": round(event.confidence, 4),
+        "fidelity": round(event.fidelity, 4),
+        "clause": event.clause,
+        "changed_columns": list(event.changed_columns),
+    }
+
+
+def _dependency_evidence(finding: dict[str, Any]) -> list[str]:
+    evidence: list[str] = []
+    blast = finding.get("blast_radius") or []
+    if blast:
+        evidence.append(f"confirmed_blast_radius:{len(blast)}")
+    else:
+        evidence.append("no_confirmed_downstream_dependency")
+    business = str(
+        ((finding.get("business_impact") or {}).get("highest_business_severity") or "")
+    ).upper()
+    if business in {"BOARD_CRITICAL", "EXEC_CRITICAL", "REVENUE_CRITICAL", "CUSTOMER_FACING"}:
+        evidence.append("revenue_critical_downstream")
+    elif business and business != "UNKNOWN":
+        evidence.append(f"business_severity:{business.lower()}")
+    if finding.get("trigger_evidence"):
+        evidence.append("inferred_contract_only")
+    return evidence
+
+
+def _dependency_discounts(finding: dict[str, Any], family: str) -> list[str]:
+    discounts: list[str] = []
+    if family in {"join_cardinality", "grain_contract_drift", "join_relationship_drift"}:
+        discounts.append("no_explicit_grain_contract")
+    if not finding.get("blast_radius"):
+        discounts.append("no_confirmed_downstream_dependency")
+    if not (finding.get("business_impact") or {}).get("highest_business_severity"):
+        discounts.append("unknown_business_criticality")
+    return discounts
+
+
+def _fidelity_evidence(
+    supporting_events: list[SemanticDiffEvent], finding: dict[str, Any]
+) -> list[str]:
+    evidence: list[str] = []
+    if supporting_events:
+        evidence.append("semantic_diff_event_available")
+        if any("sqlglot" in event.source for event in supporting_events):
+            evidence.append("sqlglot_ast_diff_available")
+        else:
+            evidence.append("clause_or_fallback_semantic_diff_available")
+    replay = finding.get("replay_fidelity") or {}
+    if replay.get("score") is not None:
+        evidence.append("static_replay_fidelity_score_available")
+    return evidence or ["generic_receipt_context_only"]
+
+
+def _fidelity_discounts(finding: dict[str, Any]) -> list[str]:
+    discounts: list[str] = []
+    replay = finding.get("replay_fidelity") or {}
+    if not replay.get("queries_replayed"):
+        discounts.append("no_behavioral_replay")
+    return discounts
+
+
+def _actionability_evidence(finding: dict[str, Any]) -> list[str]:
+    evidence: list[str] = []
+    if finding.get("recommended_check"):
+        evidence.append("specific_recommended_check")
+    if finding.get("stable_id") or finding.get("id"):
+        evidence.append("stable_finding_id")
+    if finding.get("assumption"):
+        evidence.append("assumption_text_available")
+    if finding.get("trigger_evidence"):
+        evidence.append("trigger_evidence_available")
+    return evidence
+
+
+def _actionability_discounts(finding: dict[str, Any]) -> list[str]:
+    discounts: list[str] = []
+    if not finding.get("recommended_check"):
+        discounts.append("missing_specific_recommended_check")
+    if not (finding.get("stable_id") or finding.get("id")):
+        discounts.append("missing_stable_finding_id")
+    return discounts
 
 
 def _rank_score(

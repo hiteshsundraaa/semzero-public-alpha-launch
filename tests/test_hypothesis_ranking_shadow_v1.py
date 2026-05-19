@@ -79,6 +79,12 @@ def test_enum_only_change_ranks_enum_primary_and_join_advisory():
     assert ranked["enum_domain_closure"]["role"] == "primary"
     assert ranked["enum_domain_closure"]["activation_floor"] == 0.40
     assert "case_else_changed" in ranked["enum_domain_closure"]["supporting_event_types"]
+    decomposition = ranked["enum_domain_closure"]["score_decomposition"]
+    assert decomposition["final_score"] == ranked["enum_domain_closure"]["rank_score"]
+    assert decomposition["change_specificity"]["weight"] == 0.35
+    assert decomposition["change_specificity"]["evidence"][0]["event_type"] == (
+        "case_else_changed"
+    )
     assert ranked["join_cardinality"]["role"] == "advisory"
     assert ranked["join_cardinality"]["suppression_reason"] == (
         "dependency_context_without_semantic_change_event"
@@ -105,6 +111,49 @@ def test_join_key_change_ranks_join_primary():
     assert payload["primary_family"] == "join_cardinality"
     assert payload["ranked_hypotheses"][0]["role"] == "primary"
     assert payload["ranked_hypotheses"][0]["change_specificity"] > 0.60
+    assert isinstance(
+        payload["ranked_hypotheses"][0]["score_decomposition"]["final_score"], float
+    )
+
+
+def test_grain_group_by_decomposition_includes_events_and_dependency_discounts():
+    events = [
+        SemanticDiffEvent(
+            event_type="group_by_key_added",
+            family_hint="grain_contract_drift",
+            before=("customer_id",),
+            after=("customer_id", "payment_status"),
+            changed_columns=("payment_status",),
+            clause="GROUP_BY",
+            confidence=0.95,
+            fidelity=0.95,
+            source="sqlglot_ast_diff",
+        ),
+        SemanticDiffEvent(
+            event_type="group_by_key_removed",
+            family_hint="grain_contract_drift",
+            before=("customer_id", "payment_status"),
+            after=("customer_id",),
+            changed_columns=("payment_status",),
+            clause="GROUP_BY",
+            confidence=0.90,
+            fidelity=0.95,
+            source="sqlglot_ast_diff",
+        ),
+    ]
+
+    payload = rank_hypotheses([_finding("join_cardinality", stable_id="AG-JOIN")], events)
+    hypothesis = payload["ranked_hypotheses"][0]
+    decomposition = hypothesis["score_decomposition"]
+    event_types = {
+        item["event_type"] for item in decomposition["change_specificity"]["evidence"]
+    }
+
+    assert payload["primary_family"] == "join_cardinality"
+    assert {"group_by_key_added", "group_by_key_removed"}.issubset(event_types)
+    assert "inferred_contract_only" in decomposition["dependency_score"]["evidence"]
+    assert "no_explicit_grain_contract" in decomposition["dependency_score"]["discounts"]
+    assert decomposition["final_score"] == hypothesis["rank_score"]
 
 
 def test_formatting_only_change_produces_silent_pass_no_primary():

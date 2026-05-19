@@ -126,6 +126,7 @@ def commands_cmd():
     click.echo("    semzero demo       Run the focused killer demo from a source checkout")
     click.echo("    semzero doctor-assumption-ci Check dbt repo readiness for SemZero CI")
     click.echo("    semzero baseline-check Verify a clean dbt repo still matches a stored SemZero baseline")
+    click.echo("    semzero smoke-summary Classify SemZero smoke artifacts as PASS/PARTIAL/FAIL")
     click.echo("    semzero check     Reuse the best current receipt and summarize risk")
     click.echo("    semzero explain   Explain why the current receipt blocked/warned")
     click.echo("    semzero recheck   Run a fresh high-level validation wrapper")
@@ -334,6 +335,49 @@ def baseline_check_cmd(repo: str, baseline_dir: str, output: str, priority_toler
     click.echo(f"  Result → {output}\n")
     if status != "PASS":
         raise click.ClickException("Clean repo output did not match a valid stored baseline.")
+
+
+@cli.command("smoke-summary")
+@click.option("--artifact-dir", required=True, help="Directory containing smoke run artifacts.")
+@click.option("--scenario", required=True, help="Smoke scenario id to classify.")
+@click.option(
+    "--output-dir",
+    default="",
+    show_default=False,
+    help="Directory for smoke_summary.json/md. Defaults to --artifact-dir.",
+)
+@click.option(
+    "--expected-changed-file-count",
+    default=1,
+    show_default=True,
+    type=int,
+    help="Expected changed-file count for clean smoke branches.",
+)
+def smoke_summary_cmd(
+    artifact_dir: str,
+    scenario: str,
+    output_dir: str,
+    expected_changed_file_count: int,
+):
+    """Classify SemZero smoke artifacts without manually inspecting JSON."""
+    from semzero.repo_understanding.mutation_harness import write_smoke_summary_artifacts
+
+    artifacts = write_smoke_summary_artifacts(
+        artifact_dir,
+        scenario=scenario,
+        output_dir=output_dir or None,
+        expected_changed_file_count=expected_changed_file_count,
+    )
+    summary = artifacts["smoke_summary"]["summary"]
+    click.echo("\n  SemZero Smoke Summary")
+    click.echo(f"  Scenario: {summary['scenario']}")
+    click.echo(f"  Result: {summary['result']}")
+    click.echo(f"  Reason: {summary['reason']}")
+    click.echo(f"  Primary: {summary['actual_primary'] or 'none'}")
+    click.echo(f"  Changed files: {summary['changed_file_count']}")
+    click.echo(f"  Compile: {summary['compile_status']}\n")
+    if summary["result"] == "FAIL":
+        raise click.ClickException("Smoke summary classified this run as FAIL.")
 
 
 @cli.command("init-ci")

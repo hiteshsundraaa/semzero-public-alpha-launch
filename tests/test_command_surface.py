@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -15,25 +16,63 @@ def test_commands_command_lists_high_level_and_engine_commands():
     assert "semzero gate | wind-tunnel | chaos | premerge | validate-e2e" in result.output
 
 
-def test_check_command_reads_premerge_bundle():
+def _premerge_bundle(tmp_path: Path) -> Path:
+    bundle = tmp_path / "premerge_bundle.json"
+    bundle.write_text(
+        json.dumps(
+            {
+                "gate_result": {
+                    "verdict": "BLOCK",
+                    "blocked_by": ["domain enum drift"],
+                    "review_reasons": [],
+                    "total_blast_radius": 3,
+                    "evaluated_at": "2026-04-05T00:00:00+00:00",
+                },
+                "wind_tunnel_receipt": {
+                    "verdict": "BLOCKED",
+                    "queries_replayed": 18,
+                    "queries_broken": 1,
+                    "queries_mismatch": 1,
+                    "confidence_score": 0.9,
+                    "completed_at": "2026-04-05T00:10:00+00:00",
+                },
+                "chaos_report": {
+                    "summary": {
+                        "mutations_applied": 10,
+                        "mutations_that_broke": 0,
+                        "generated_at": "2026-04-05T00:20:00+00:00",
+                    }
+                },
+                "artifact_paths": {
+                    "gate_result": "premerge_gate_result.json",
+                    "wind_tunnel": "wind_tunnel_receipt.json",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return bundle
+
+
+def test_check_command_reads_premerge_bundle(tmp_path):
     from semzero.cli import cli
 
     runner = CliRunner()
-    bundle = "validation_artifacts/run_phase1_0.4.0/premerge/premerge_bundle.json"
-    result = runner.invoke(cli, ["check", "--receipt", bundle])
+    bundle = _premerge_bundle(tmp_path)
+    result = runner.invoke(cli, ["check", "--receipt", str(bundle)])
 
     assert result.exit_code == 0
     assert "Verdict:" in result.output
     assert "Evidence source:" in result.output
-    assert bundle in result.output
+    assert str(bundle) in result.output
 
 
-def test_explain_command_lists_linked_artifacts():
+def test_explain_command_lists_linked_artifacts(tmp_path):
     from semzero.cli import cli
 
     runner = CliRunner()
-    bundle = "validation_artifacts/run_phase1_0.4.0/premerge/premerge_bundle.json"
-    result = runner.invoke(cli, ["explain", "--receipt", bundle])
+    bundle = _premerge_bundle(tmp_path)
+    result = runner.invoke(cli, ["explain", "--receipt", str(bundle)])
 
     assert result.exit_code == 0
     assert "Linked artifacts:" in result.output
