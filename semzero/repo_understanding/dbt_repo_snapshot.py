@@ -270,21 +270,23 @@ def _selected_columns_from_sql(sql: str) -> list[str]:
 
 def _downstream_column_references(
     model_uid: str,
+    model_name: str,
     selected_columns: list[str],
     children: dict[str, list[str]],
     resources: dict[str, dict[str, Any]],
     sensitivity_by_uid: dict[str, dict[str, str]],
 ) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
-    if not selected_columns:
-        return references
     for child_uid in children.get(model_uid, []):
         child = resources.get(child_uid) or {}
         raw_sql, compiled_sql = _resource_sql(child)
         search_sql = f"{raw_sql}\n{compiled_sql}"
-        for column in selected_columns:
-            pattern = re.compile(rf"(?:\.\s*|\b){re.escape(column)}\b", flags=re.I)
-            if not pattern.search(search_sql):
+        referenced_columns = set(_parent_alias_column_references(search_sql, model_name))
+        # Keep selected columns in the surface for direct contract visibility, but
+        # downstream references must be alias-qualified to avoid attributing
+        # another joined relation's column to this parent.
+        for column in sorted(set(selected_columns).union(referenced_columns)):
+            if column not in referenced_columns:
                 continue
             sensitivity = sensitivity_by_uid.get(child_uid, {"label": "UNKNOWN", "source": "unknown"})
             references.append(
@@ -306,6 +308,24 @@ def _downstream_column_references(
             str(item.get("downstream_model")),
         ),
     )
+
+
+def _parent_alias_column_references(sql: str, model_name: str) -> list[str]:
+    aliases = set()
+    name = re.escape(model_name)
+    for pattern in [
+        rf"\bref\s*\(\s*['\"]{name}['\"]\s*\)\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+        rf"(?:^|\s|\.|\"|`){name}(?:\"|`)?\s+(?:as\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+    ]:
+        for match in re.finditer(pattern, sql or "", flags=re.I):
+            alias = match.group(1)
+            if alias.lower() not in {"where", "join", "left", "right", "inner", "on"}:
+                aliases.add(alias)
+    columns: set[str] = set()
+    for alias in aliases:
+        for match in re.finditer(rf"\b{re.escape(alias)}\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)", sql or "", flags=re.I):
+            columns.add(match.group(1))
+    return sorted(columns)
 
 
 def _shortest_downstream(
@@ -500,6 +520,7 @@ def build_dbt_repo_snapshot(
         selected_columns = _selected_columns_from_sql(compiled_sql or raw_sql)
         downstream_column_refs = _downstream_column_references(
             uid,
+            _resource_name(model),
             selected_columns,
             children,
             resources,
