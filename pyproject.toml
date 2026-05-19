@@ -22,6 +22,9 @@ dependencies = [
     # Templating
     "jinja2>=3.1",
 
+    # SQL semantic diffing
+    "sqlglot>=25.0",
+
     # CLI
     "click>=8.1",
     "pyyaml>=6.0",

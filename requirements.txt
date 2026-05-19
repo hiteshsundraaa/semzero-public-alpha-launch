@@ -5,6 +5,7 @@ requests>=2.31
 click>=8.1
 pandas>=2.0
 pyyaml>=6.0
+sqlglot>=25.0
 python-dotenv>=1.0
 
 # Optional — install what you need
