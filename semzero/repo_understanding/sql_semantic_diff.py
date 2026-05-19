@@ -130,9 +130,7 @@ SQL_KEYWORDS = {
 
 IDENTIFIER_RE = re.compile(r"\b[a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?\b")
 AGG_RE = re.compile(r"\b(count|sum|avg|min|max|median)\s*\((.*?)\)", re.I | re.S)
-CASE_RE = re.compile(r"\bcase\b(.*?)\bend\b", re.I | re.S)
-CASE_WHEN_RE = re.compile(r"\bwhen\b(.*?)\bthen\b(.*?)(?=\bwhen\b|\belse\b|$)", re.I | re.S)
-CASE_ELSE_RE = re.compile(r"\belse\b(.*?)$", re.I | re.S)
+CASE_TOKEN_RE = re.compile(r"\b(case|when|then|else|end)\b", re.I)
 COALESCE_RE = re.compile(r"\b(coalesce|ifnull|nvl)\s*\((.*?)\)", re.I | re.S)
 IN_LIST_RE = re.compile(
     r"\b([a-zA-Z_][\w]*(?:\.[a-zA-Z_][\w]*)?)\s+in\s*\((.*?)\)", re.I | re.S
@@ -1303,21 +1301,82 @@ def _metric_items(sql: str) -> dict[str, dict[str, Any]]:
 
 def _case_summaries(sql: str) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
-    for match in CASE_RE.finditer(_strip_comments(sql)):
-        block = match.group(0)
-        body = match.group(1)
-        branches = []
-        for branch in CASE_WHEN_RE.finditer(body):
-            branches.append(_normalize_sql(branch.group(1) + " then " + branch.group(2)))
-        else_match = CASE_ELSE_RE.search(body)
+    for block in _case_blocks(_strip_comments(sql)):
+        body = _case_body(block)
+        branches = _top_level_case_branches(body)
         summaries.append(
             {
                 "raw": _normalize_raw(block),
                 "branches": tuple(branches),
-                "else": _normalize_sql(else_match.group(1)) if else_match else "",
+                "else": _top_level_case_else(body),
             }
         )
     return summaries
+
+
+def _case_blocks(sql: str) -> list[str]:
+    stack: list[int] = []
+    blocks: list[tuple[int, str]] = []
+    for match in CASE_TOKEN_RE.finditer(sql):
+        token = match.group(1).lower()
+        if token == "case":
+            stack.append(match.start())
+        elif token == "end" and stack:
+            start = stack.pop()
+            blocks.append((start, sql[start : match.end()]))
+    return [block for _, block in sorted(blocks, key=lambda item: item[0])]
+
+
+def _case_body(block: str) -> str:
+    text = block.strip()
+    if text.lower().startswith("case"):
+        text = text[4:]
+    if text.lower().endswith("end"):
+        text = text[:-3]
+    return text.strip()
+
+
+def _top_level_case_else(body: str) -> str:
+    depth = 0
+    else_start: int | None = None
+    for match in CASE_TOKEN_RE.finditer(body):
+        token = match.group(1).lower()
+        if token == "case":
+            depth += 1
+        elif token == "end":
+            depth = max(depth - 1, 0)
+        elif token == "else" and depth == 0:
+            else_start = match.end()
+    return _normalize_literal(body[else_start:]) if else_start is not None else ""
+
+
+def _top_level_case_branches(body: str) -> list[str]:
+    branches: list[str] = []
+    depth = 0
+    branch_start: int | None = None
+    for match in CASE_TOKEN_RE.finditer(body):
+        token = match.group(1).lower()
+        if token == "case":
+            depth += 1
+        elif token == "end":
+            depth = max(depth - 1, 0)
+        elif token == "when" and depth == 0:
+            if branch_start is not None:
+                branch = _normalize_sql(body[branch_start : match.start()])
+                if branch:
+                    branches.append(branch)
+            branch_start = match.start()
+        elif token == "else" and depth == 0:
+            if branch_start is not None:
+                branch = _normalize_sql(body[branch_start : match.start()])
+                if branch:
+                    branches.append(branch)
+            branch_start = None
+    if branch_start is not None:
+        branch = _normalize_sql(body[branch_start:])
+        if branch:
+            branches.append(branch)
+    return branches
 
 
 def _in_lists(sql: str) -> dict[str, set[str]]:
@@ -1422,7 +1481,8 @@ def _has_arithmetic(expr: str) -> bool:
 
 def _changed_columns(text: str) -> tuple[str, ...]:
     columns: list[str] = []
-    for raw in IDENTIFIER_RE.findall(str(text or "")):
+    text_without_literals = re.sub(r"'[^']*'|\"[^\"]*\"", " ", str(text or ""))
+    for raw in IDENTIFIER_RE.findall(text_without_literals):
         token = _normalize_identifier(raw)
         short = token.split(".")[-1]
         if short in SQL_KEYWORDS or short.isdigit():

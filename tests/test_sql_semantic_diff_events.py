@@ -56,6 +56,36 @@ def test_enum_only_change_scores_enum_not_join_or_grain():
     assert score_family_change_specificity(events, "grain_contract_drift") == 0.0
 
 
+def test_nested_case_else_change_scores_enum_for_repo3_payment_summary_shape():
+    before = """
+    WITH payment_summary AS (
+        SELECT
+            customer_id,
+            COUNT(payment_id) AS total_payments,
+            SUM(payment_value) AS total_paid,
+            CASE
+                WHEN SUM(CASE WHEN payment_status = 'completed' THEN 1 ELSE 0 END) > 0
+                THEN 'paid'
+                ELSE 'pending'
+            END AS final_payment_status
+        FROM {{ ref('stg_payments') }}
+        GROUP BY customer_id
+    )
+    SELECT * FROM payment_summary
+    """
+    after = before.replace("ELSE 'pending'", "ELSE 'unresolved'")
+
+    events = extract_clause_fallback_events(before, after, model="int_payment_summary")
+    case_event = _by_type(events)["case_else_changed"]
+
+    assert case_event.family_hint == "enum_domain_closure"
+    assert case_event.before == "pending"
+    assert case_event.after == "unresolved"
+    assert "payment_status" in case_event.changed_columns
+    assert score_family_change_specificity(events, "enum_domain_closure") > 0.60
+    assert score_family_change_specificity(events, "join_relationship_drift") == 0.0
+
+
 def test_join_key_change_is_property_specific():
     before = """
     select o.order_id, p.payment_id
